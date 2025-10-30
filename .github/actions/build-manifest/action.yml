@@ -14,11 +14,21 @@ inputs:
   semver:
     description: "Semantic version tag (e.g., v1.2.3)"
     required: true
+  wait-for-images:
+    description: "Maximum seconds to wait for arch images to become available (0 = no wait)"
+    required: false
+    default: "300"
 
 outputs:
   manifest:
     description: "Full image reference for the created manifest (registry/org/app:tag)"
     value: ${{ steps.manifest.outputs.manifest }}
+  digest:
+    description: "Manifest digest (sha256:...)"
+    value: ${{ steps.manifest.outputs.digest }}
+  architectures:
+    description: "Comma-separated list of architectures in manifest"
+    value: ${{ steps.manifest.outputs.architectures }}
 
 runs:
   using: "composite"
@@ -32,7 +42,14 @@ runs:
       run: |
         set -euo pipefail
 
-        echo "🔗 Checking multi-arch manifest for $IMAGE:$SEMVER"
+        # Validate semver format
+        echo "� Validating inputs..."
+        if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected format: v1.2.3"
+          exit 1
+        fi
+
+        echo "�🔗 Checking multi-arch manifest for $IMAGE:$SEMVER"
 
         # If manifest already exists, exit early
         if docker manifest inspect "$IMAGE:$SEMVER" >/dev/null 2>&1; then
@@ -42,12 +59,13 @@ runs:
         fi
 
         # Verify both architecture images exist
+        echo "🔍 Verifying architecture-specific images exist..."
         missing_arches=()
         for arch in amd64 arm64; do
           if docker buildx imagetools inspect "$IMAGE:$SEMVER-$arch" >/dev/null 2>&1; then
             echo "✅ Found $IMAGE:$SEMVER-$arch"
           else
-            echo "⚠️  Missing $IMAGE:$SEMVER-$arch"
+            echo "❌ Missing $IMAGE:$SEMVER-$arch"
             missing_arches+=("$arch")
           fi
         done
@@ -55,13 +73,28 @@ runs:
         # Create manifest if all images exist
         if [ ${#missing_arches[@]} -eq 0 ]; then
           echo "🚀 Creating multi-arch manifest $IMAGE:$SEMVER"
-          docker buildx imagetools create \
+          
+          if ! docker buildx imagetools create \
             --tag "$IMAGE:$SEMVER" \
             "$IMAGE:$SEMVER-amd64" \
-            "$IMAGE:$SEMVER-arm64"
+            "$IMAGE:$SEMVER-arm64"; then
+            echo "❌ ERROR: Failed to create manifest"
+            echo "   Target: $IMAGE:$SEMVER"
+            echo "   Sources:"
+            echo "     - $IMAGE:$SEMVER-amd64"
+            echo "     - $IMAGE:$SEMVER-arm64"
+            exit 1
+          fi
+          
           echo "✅ Manifest created: $IMAGE:$SEMVER"
           echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
         else
-          echo "❌ Cannot create manifest, missing architecture(s): ${missing_arches[*]}"
+          echo "❌ ERROR: Cannot create manifest - missing architecture image(s)"
+          echo "   Missing: ${missing_arches[*]}"
+          echo "   Expected images:"
+          echo "     - $IMAGE:$SEMVER-amd64"
+          echo "     - $IMAGE:$SEMVER-arm64"
+          echo ""
+          echo "   Ensure the build job completed successfully for all architectures."
           exit 1
         fi

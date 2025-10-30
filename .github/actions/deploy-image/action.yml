@@ -1,0 +1,151 @@
+name: "Import GHCR to ACR"
+description: "Imports a container image from GitHub Container Registry to Azure Container Registry"
+
+inputs:
+  org:
+    description: "GitHub organization that owns the GHCR package"
+    required: true
+  package:
+    description: "Package name in GHCR (e.g., mesh-authd)"
+    required: true
+  semver:
+    description: "Specific tag/version to import"
+    required: true
+  acr_name:
+    description: "Azure Container Registry short name (not FQDN)"
+    required: true
+  target_repo:
+    description: "Target repository name in ACR (defaults to package name)"
+    required: false
+    default: ""
+  ghcr_user:
+    description: "GitHub username for GHCR authentication (e.g., github.actor)"
+    required: true
+  ghcr_token:
+    description: "GitHub token for GHCR authentication (requires read:packages scope)"
+    required: true
+
+outputs:
+  image:
+    description: "Full ACR image reference (acr.azurecr.io/repo:tag)"
+    value: ${{ steps.import.outputs.image }}
+  exists:
+    description: "Whether image already existed in ACR (true/false)"
+    value: ${{ steps.import.outputs.exists }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Import Image from GHCR to ACR
+      id: import
+      shell: bash
+      env:
+        ORG: ${{ inputs.org }}
+        PACKAGE: ${{ inputs.package }}
+        SEMVER: ${{ inputs.semver }}
+        ACR_NAME: ${{ inputs.acr_name }}
+        TARGET_REPO: ${{ inputs.target_repo }}
+        GHCR_USER: ${{ inputs.ghcr_user }}
+        GHCR_TOKEN: ${{ inputs.ghcr_token }}
+      run: |
+        set -euo pipefail
+        
+        # Validate inputs
+        echo "🔍 Validating inputs..."
+        if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected format: v1.2.3"
+          exit 1
+        fi
+
+        if [[ -z "$GHCR_USER" ]]; then
+          echo "❌ ERROR: GHCR username is required"
+          exit 1
+        fi
+
+        if [[ -z "$GHCR_TOKEN" ]]; then
+          echo "❌ ERROR: GHCR token is required"
+          exit 1
+        fi
+
+        # Verify Azure CLI is logged in
+        echo "🔍 Verifying Azure CLI authentication..."
+        if ! az account show >/dev/null 2>&1; then
+          echo "❌ ERROR: Not logged in to Azure CLI"
+          echo "   Run 'az login' or ensure OIDC authentication is configured."
+          exit 1
+        fi
+
+        # Verify ACR exists
+        echo "🔍 Verifying ACR '$ACR_NAME' exists..."
+        if ! az acr show --name "$ACR_NAME" >/dev/null 2>&1; then
+          echo "❌ ERROR: Azure Container Registry '$ACR_NAME' not found"
+          echo "   Available ACRs in current subscription:"
+          az acr list --query "[].name" -o tsv 2>/dev/null || echo "   (none found or insufficient permissions)"
+          exit 1
+        fi
+
+        # Use package name as target repo if not specified
+        if [ -z "$TARGET_REPO" ]; then
+          TARGET_REPO="$PACKAGE"
+        fi
+        
+        SOURCE="ghcr.io/$ORG/$PACKAGE:$SEMVER"
+        IMAGE="$TARGET_REPO:$SEMVER"
+        ACR_FQDN=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+        ACR_IMAGE="$ACR_FQDN/$IMAGE"
+        
+        echo "📦 Checking if $ACR_NAME/$IMAGE exists..."
+        
+        if az acr repository show --name "$ACR_NAME" --image "$IMAGE" >/dev/null 2>&1; then
+          echo "✅ Image $ACR_NAME/$IMAGE already exists, skipping import."
+          
+          # Set outputs
+          echo "image=$ACR_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "🚀 Importing $SOURCE -> $ACR_NAME/$IMAGE"
+          
+          # Import with retry logic (3 attempts)
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          
+          while [[ $ATTEMPT -le $MAX_ATTEMPTS ]]; do
+            echo "📥 Import attempt $ATTEMPT/$MAX_ATTEMPTS..."
+            
+            if az acr import \
+              --name "$ACR_NAME" \
+              --source "$SOURCE" \
+              --image "$IMAGE" \
+              --username "$GHCR_USER" \
+              --password "$GHCR_TOKEN"; then
+              echo "✅ Successfully imported $ACR_NAME/$IMAGE"
+              
+              # Set outputs
+              echo "image=$ACR_IMAGE" >> "$GITHUB_OUTPUT"
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              
+              exit 0
+            else
+              if [[ $ATTEMPT -lt $MAX_ATTEMPTS ]]; then
+                echo "⚠️  Import failed, retrying in 15 seconds..."
+                sleep 15
+                ((ATTEMPT++))
+              else
+                echo ""
+                echo "❌ ERROR: Failed to import image after $MAX_ATTEMPTS attempts"
+                echo "   Source: $SOURCE"
+                echo "   Target: $ACR_NAME/$IMAGE"
+                echo ""
+                echo "   Possible causes:"
+                echo "   - Source image does not exist in GHCR"
+                echo "   - GHCR authentication failed (check token permissions)"
+                echo "   - ACR has insufficient permissions or is not accessible"
+                echo "   - Network connectivity issues"
+                echo ""
+                echo "   Verify the source image exists:"
+                echo "   docker manifest inspect $SOURCE"
+                exit 1
+              fi
+            fi
+          done
+        fi

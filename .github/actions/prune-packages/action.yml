@@ -1,0 +1,296 @@
+name: "Prune Container Packages"
+description: "Removes old pre-release container images from GitHub Container Registry, keeping only the latest N. Never removes stable releases."
+
+inputs:
+  org:
+    description: "GitHub organization that owns the packages"
+    required: true
+  package-prefix:
+    description: "Package name prefix to filter (e.g., 'mesh-' to match mesh-authd, mesh-brokerd)"
+    required: false
+    default: ""
+  keep-count:
+    description: "Number of most recent pre-release images to keep per package"
+    required: false
+    default: "10"
+  dry-run:
+    description: "Preview what would be deleted without actually deleting (true/false)"
+    required: false
+    default: "false"
+  token:
+    description: "GitHub token with packages:delete scope"
+    required: true
+
+outputs:
+  deleted-count:
+    description: "Total number of package versions deleted (or would be deleted in dry-run)"
+    value: ${{ steps.prune.outputs.deleted-count }}
+  packages-processed:
+    description: "Number of packages processed"
+    value: ${{ steps.prune.outputs.packages-processed }}
+  total-versions:
+    description: "Total package versions found"
+    value: ${{ steps.prune.outputs.total-versions }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Prune Container Package Versions
+      id: prune
+      shell: bash
+      env:
+        ORG: ${{ inputs.org }}
+        PACKAGE_PREFIX: ${{ inputs.package-prefix }}
+        KEEP_COUNT: ${{ inputs.keep-count }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+
+        # Validate inputs
+        echo "🔍 Validating inputs..."
+        if [[ ! "$KEEP_COUNT" =~ ^[0-9]+$ ]]; then
+          echo "❌ ERROR: Invalid keep-count '$KEEP_COUNT'. Must be a positive integer."
+          exit 1
+        fi
+
+        if [[ ! "$DRY_RUN" =~ ^(true|false)$ ]]; then
+          echo "❌ ERROR: Invalid dry-run value '$DRY_RUN'. Must be 'true' or 'false'."
+          exit 1
+        fi
+
+        if [[ -z "$GITHUB_TOKEN" ]]; then
+          echo "❌ ERROR: GitHub token is required"
+          exit 1
+        fi
+
+        echo "📦 Fetching container packages for organization: $ORG"
+        if [[ -n "$PACKAGE_PREFIX" ]]; then
+          echo "   Filtering packages with prefix: $PACKAGE_PREFIX"
+        fi
+
+        # GitHub API endpoint for packages
+        API_URL="https://api.github.com/orgs/$ORG/packages"
+        
+        # Fetch all container packages
+        PACKAGES=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "$API_URL?package_type=container&per_page=100")
+
+        if [[ "$PACKAGES" == *"Bad credentials"* ]] || [[ "$PACKAGES" == *"\"message\":"* ]]; then
+          echo "❌ ERROR: Failed to fetch packages"
+          echo "$PACKAGES" | jq -r '.message // "Unknown error"' 2>/dev/null || echo "$PACKAGES"
+          exit 1
+        fi
+
+        # Filter packages by prefix if specified
+        if [[ -n "$PACKAGE_PREFIX" ]]; then
+          PACKAGE_NAMES=$(echo "$PACKAGES" | jq -r --arg prefix "$PACKAGE_PREFIX" \
+            '.[] | select(.name | startswith($prefix)) | .name' 2>/dev/null || echo "")
+        else
+          PACKAGE_NAMES=$(echo "$PACKAGES" | jq -r '.[].name' 2>/dev/null || echo "")
+        fi
+
+        if [[ -z "$PACKAGE_NAMES" ]]; then
+          echo "⚠️  No packages found matching criteria"
+          echo "deleted-count=0" >> "$GITHUB_OUTPUT"
+          echo "packages-processed=0" >> "$GITHUB_OUTPUT"
+          echo "total-versions=0" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        PACKAGES_PROCESSED=0
+        TOTAL_DELETED=0
+        TOTAL_VERSIONS=0
+
+        # Process each package
+        while IFS= read -r PACKAGE_NAME; do
+          if [[ -z "$PACKAGE_NAME" ]]; then
+            continue
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📦 Processing package: $PACKAGE_NAME"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          ((PACKAGES_PROCESSED++))
+
+          # Fetch all versions for this package
+          VERSIONS_URL="$API_URL/container/$PACKAGE_NAME/versions?per_page=100"
+          VERSIONS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "$VERSIONS_URL")
+
+          # Extract version information (id, tags, created_at)
+          # Note: Each version in GHCR represents a complete multi-arch image set:
+          #   - The multi-arch manifest (e.g., v1.2.3)
+          #   - All architecture tags (e.g., v1.2.3-amd64, v1.2.3-arm64)
+          # Deleting a version removes the manifest AND all arch-specific tags atomically
+          VERSION_DATA=$(echo "$VERSIONS" | jq -r '.[] | "\(.id)|\(.metadata.container.tags | join(","))|\(.created_at)"' 2>/dev/null || echo "")
+
+          if [[ -z "$VERSION_DATA" ]]; then
+            echo "⚠️  No versions found for package: $PACKAGE_NAME"
+            continue
+          fi
+
+          STABLE_VERSIONS=()
+          PRERELEASE_VERSIONS=()
+          VERSION_IDS=()
+
+          # Parse versions and classify them
+          while IFS='|' read -r VERSION_ID TAGS CREATED_AT; do
+            if [[ -z "$VERSION_ID" ]]; then
+              continue
+            fi
+
+            ((TOTAL_VERSIONS++))
+
+            # Check if any tag is a semver
+            IS_STABLE=false
+            IS_PRERELEASE=false
+            DISPLAY_TAG=""
+
+            IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
+            for TAG in "${TAG_ARRAY[@]}"; do
+              # Stable release: vX.Y.Z (no suffix)
+              if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                IS_STABLE=true
+                DISPLAY_TAG="$TAG"
+                break
+              # Pre-release: vX.Y.Z-{anything}
+              elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+                IS_PRERELEASE=true
+                DISPLAY_TAG="$TAG"
+              fi
+            done
+
+            if [[ "$IS_STABLE" == "true" ]]; then
+              STABLE_VERSIONS+=("$VERSION_ID|$DISPLAY_TAG|$CREATED_AT")
+            elif [[ "$IS_PRERELEASE" == "true" ]]; then
+              PRERELEASE_VERSIONS+=("$VERSION_ID|$DISPLAY_TAG|$CREATED_AT")
+            fi
+          done <<< "$VERSION_DATA"
+
+          # Sort pre-release versions by creation date (newest first)
+          if [[ ${#PRERELEASE_VERSIONS[@]} -gt 0 ]]; then
+            IFS=$'\n' SORTED_PRERELEASES=($(sort -t'|' -k3 -r <<< "${PRERELEASE_VERSIONS[*]}"))
+            unset IFS
+          else
+            SORTED_PRERELEASES=()
+          fi
+
+          echo ""
+          echo "📊 Version Summary:"
+          echo "   Stable releases: ${#STABLE_VERSIONS[@]}"
+          echo "   Pre-releases: ${#SORTED_PRERELEASES[@]}"
+          echo "   Keeping latest: $KEEP_COUNT pre-releases"
+
+          # Determine which pre-release versions to delete
+          VERSIONS_TO_DELETE=()
+          VERSIONS_TO_KEEP=()
+          
+          COUNT=0
+          for VERSION_INFO in "${SORTED_PRERELEASES[@]}"; do
+            if [[ $COUNT -lt $KEEP_COUNT ]]; then
+              VERSIONS_TO_KEEP+=("$VERSION_INFO")
+              ((COUNT++))
+            else
+              VERSIONS_TO_DELETE+=("$VERSION_INFO")
+            fi
+          done
+
+          echo ""
+          echo "✅ Pre-release versions to keep (${#VERSIONS_TO_KEEP[@]}):"
+          if [[ ${#VERSIONS_TO_KEEP[@]} -eq 0 ]]; then
+            echo "   (none)"
+          else
+            for VERSION_INFO in "${VERSIONS_TO_KEEP[@]}"; do
+              IFS='|' read -r VID VTAG VDATE <<< "$VERSION_INFO"
+              # Get all tags for this version
+              ALL_TAGS=$(echo "$VERSION_DATA" | grep "^$VID|" | cut -d'|' -f2)
+              echo "   - $VTAG (created: ${VDATE:0:10})"
+              echo "     Tags: $ALL_TAGS"
+            done
+          fi
+
+          echo ""
+          echo "🗑️  Pre-release versions to delete (${#VERSIONS_TO_DELETE[@]}):"
+          if [[ ${#VERSIONS_TO_DELETE[@]} -eq 0 ]]; then
+            echo "   (none)"
+          else
+            for VERSION_INFO in "${VERSIONS_TO_DELETE[@]}"; do
+              IFS='|' read -r VID VTAG VDATE <<< "$VERSION_INFO"
+              # Get all tags for this version
+              ALL_TAGS=$(echo "$VERSION_DATA" | grep "^$VID|" | cut -d'|' -f2)
+              echo "   - $VTAG (created: ${VDATE:0:10})"
+              echo "     All tags to be deleted: $ALL_TAGS"
+            done
+          fi
+
+          if [[ ${#STABLE_VERSIONS[@]} -gt 0 ]]; then
+            echo ""
+            echo "🛡️  Stable releases (never deleted):"
+            for VERSION_INFO in "${STABLE_VERSIONS[@]}"; do
+              IFS='|' read -r VID VTAG VDATE <<< "$VERSION_INFO"
+              ALL_TAGS=$(echo "$VERSION_DATA" | grep "^$VID|" | cut -d'|' -f2)
+              echo "   - $VTAG (created: ${VDATE:0:10})"
+              echo "     Tags: $ALL_TAGS"
+            done
+          fi
+
+          # Delete versions if not in dry-run mode
+          if [[ ${#VERSIONS_TO_DELETE[@]} -gt 0 ]]; then
+            if [[ "$DRY_RUN" == "true" ]]; then
+              echo ""
+              echo "🔍 DRY RUN: Would delete ${#VERSIONS_TO_DELETE[@]} versions from $PACKAGE_NAME"
+              ((TOTAL_DELETED += ${#VERSIONS_TO_DELETE[@]}))
+            else
+              echo ""
+              echo "🗑️  Deleting ${#VERSIONS_TO_DELETE[@]} pre-release versions from $PACKAGE_NAME..."
+              
+              for VERSION_INFO in "${VERSIONS_TO_DELETE[@]}"; do
+                IFS='|' read -r VERSION_ID VTAG VDATE <<< "$VERSION_INFO"
+                
+                DELETE_URL="$API_URL/container/$PACKAGE_NAME/versions/$VERSION_ID"
+                
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+                  -X DELETE \
+                  -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "$DELETE_URL")
+                
+                if [[ "$HTTP_CODE" == "204" ]] || [[ "$HTTP_CODE" == "200" ]]; then
+                  echo "   ✓ Deleted: $VTAG (ID: $VERSION_ID)"
+                  ((TOTAL_DELETED++))
+                else
+                  echo "   ⚠️  Failed to delete: $VTAG (HTTP $HTTP_CODE)"
+                fi
+                
+                # Small delay to avoid rate limiting
+                sleep 0.5
+              done
+            fi
+          fi
+
+        done <<< "$PACKAGE_NAMES"
+
+        # Final summary
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📊 Cleanup Summary"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "   Packages processed: $PACKAGES_PROCESSED"
+        echo "   Total versions found: $TOTAL_VERSIONS"
+        echo "   Versions deleted: $TOTAL_DELETED"
+        
+        if [[ "$DRY_RUN" == "true" ]]; then
+          echo ""
+          echo "🔍 This was a DRY RUN - no packages were actually deleted"
+          echo "   Set dry-run: false to perform actual deletion"
+        fi
+
+        # Set outputs
+        echo "deleted-count=$TOTAL_DELETED" >> "$GITHUB_OUTPUT"
+        echo "packages-processed=$PACKAGES_PROCESSED" >> "$GITHUB_OUTPUT"
+        echo "total-versions=$TOTAL_VERSIONS" >> "$GITHUB_OUTPUT"

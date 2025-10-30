@@ -6,12 +6,12 @@ Centralized, reusable GitHub Actions for the mesh ecosystem.
 
 ### Container Build Actions
 
-#### `actions/build-app`
+#### `.github/actions/build-app`
 Builds and pushes a single-architecture container image to a registry.
 
 **Usage:**
 ```yaml
-- uses: hydn-co/build-tools/actions/build-app@main
+- uses: hydn-co/build-tools/.github/actions/build-app@main
   with:
     app: authd              # App name (matches cmd/<app>/)
     arch: amd64            # Architecture: amd64 or arm64
@@ -26,12 +26,12 @@ Builds and pushes a single-architecture container image to a registry.
 - ✅ Tags with `registry/org/mesh-<app>:semver-arch`
 - ✅ Automatic build arg injection (SEMVER)
 
-#### `actions/build-manifest`
+#### `.github/actions/build-manifest`
 Creates a multi-architecture manifest combining amd64 and arm64 images.
 
 **Usage:**
 ```yaml
-- uses: hydn-co/build-tools/actions/build-manifest@main
+- uses: hydn-co/build-tools/.github/actions/build-manifest@main
   with:
     registry: ghcr.io
     org: hydn-co
@@ -47,12 +47,12 @@ Creates a multi-architecture manifest combining amd64 and arm64 images.
 
 ### Deployment Actions
 
-#### `actions/deploy-bicep`
+#### `.github/actions/deploy-bicep`
 Deploys Azure Bicep templates using subscription-scoped deployment.
 
 **Usage:**
 ```yaml
-- uses: hydn-co/build-tools/actions/deploy-bicep@main
+- uses: hydn-co/build-tools/.github/actions/deploy-bicep@main
   with:
     environment: dev1      # Environment name
     name: mesh-auth        # Deployment name
@@ -66,12 +66,12 @@ Deploys Azure Bicep templates using subscription-scoped deployment.
 - ✅ Template from `.deploy/bicep/main.bicep`
 - ✅ Automatic parameter override (semver, applyCerts)
 
-#### `actions/deploy-image`
+#### `.github/actions/deploy-image`
 Imports container images from GitHub Container Registry (GHCR) to Azure Container Registry (ACR).
 
 **Usage:**
 ```yaml
-- uses: hydn-co/build-tools/actions/deploy-image@main
+- uses: hydn-co/build-tools/.github/actions/deploy-image@main
   with:
     org: hydn-co
     package: mesh-authd    # GHCR package name
@@ -87,6 +87,76 @@ Imports container images from GitHub Container Registry (GHCR) to Azure Containe
 - ✅ Uses Azure CLI `az acr import`
 - ✅ Automatic authentication to GHCR
 
+#### `.github/actions/create-tag`
+Creates an annotated Git tag for a release. Safe to run multiple times.
+
+**Usage:**
+```yaml
+- uses: hydn-co/build-tools/.github/actions/create-tag@main
+  with:
+    semver: v1.2.3
+    message: "Release v1.2.3 deployed to prod1"  # Optional
+    push: true                                    # Optional, default: true
+```
+
+**Features:**
+- ✅ Idempotent (not an error if tag exists)
+- ✅ Validates semver format
+- ✅ Annotated tags with custom messages
+- ✅ Automatic push to remote with retry logic
+- ✅ Warns if tag points to different commit
+
+#### `.github/actions/prune-tags`
+Removes old pre-release Git tags, keeping only the latest N. Never removes stable releases.
+
+**Usage:**
+```yaml
+- uses: hydn-co/build-tools/.github/actions/prune-tags@main
+  with:
+    keep-count: 10        # Optional, default: 10
+    dry-run: false        # Optional, default: false
+    push: true            # Optional, default: true
+```
+
+**Features:**
+- ✅ Distinguishes pre-release (v1.2.3-alpha) from stable (v1.2.3)
+- ✅ Never deletes stable release tags
+- ✅ Keeps N most recent pre-release tags
+- ✅ Dry-run mode to preview deletions
+- ✅ Automatic remote cleanup
+- ✅ Outputs: deleted-count, deleted-tags, kept-count
+
+**Tag Classification:**
+- **Stable:** `v1.2.3` (no suffix) - **NEVER DELETED**
+- **Pre-release:** `v1.2.3-alpha.1`, `v1.2.3-dev.20241030` - kept only latest N
+
+#### `.github/actions/prune-packages`
+Removes old pre-release container images from GHCR, keeping only the latest N. Never removes stable releases.
+
+**Usage:**
+```yaml
+- uses: hydn-co/build-tools/.github/actions/prune-packages@main
+  with:
+    org: hydn-co
+    package-prefix: mesh-    # Optional, filter packages
+    keep-count: 10           # Optional, default: 10
+    dry-run: false           # Optional, default: false
+    token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+**Features:**
+- ✅ Processes multiple packages in one run
+- ✅ Distinguishes pre-release from stable container tags
+- ✅ Never deletes stable release images
+- ✅ Keeps N most recent pre-release images per package
+- ✅ Package prefix filtering (e.g., `mesh-` matches mesh-authd, mesh-brokerd)
+- ✅ Dry-run mode to preview deletions
+- ✅ Outputs: deleted-count, packages-processed, total-versions
+
+**Image Classification:**
+- **Stable:** `v1.2.3` tag - **NEVER DELETED**
+- **Pre-release:** `v1.2.3-alpha.1`, `v1.2.3-dev.20241030` - kept only latest N per package
+
 ## 🔄 Migration Guide
 
 ### From Local Actions to Centralized
@@ -101,7 +171,7 @@ Imports container images from GitHub Container Registry (GHCR) to Azure Containe
 
 **After** (using centralized):
 ```yaml
-- uses: hydn-co/build-tools/actions/build-app@main
+- uses: hydn-co/build-tools/.github/actions/build-app@main
   with:
     app: authd
     # ... inputs
@@ -112,6 +182,17 @@ Imports container images from GitHub Container Registry (GHCR) to Azure Containe
 - ✅ **Consistency**: All projects use identical, tested actions
 - ✅ **Maintainability**: Bug fixes and improvements in one place
 - ✅ **Versioning**: Pin to specific versions with `@v1`, `@main`, or commit SHA
+- ✅ **Resilient**: Input validation and error handling with clear diagnostics
+- ✅ **Fail-fast**: Pre-flight checks catch issues before expensive operations
+
+## 📚 Documentation
+
+- **[ERROR_HANDLING.md](./.github/actions/ERROR_HANDLING.md)** - Error handling, validation, and diagnostics
+- **[ADVANCED_FEATURES.md](./.github/actions/ADVANCED_FEATURES.md)** - Outputs, retry logic, caching, and health checks
+- **[SECURITY.md](./.github/actions/SECURITY.md)** - Security best practices, OIDC, and compliance
+- **[MIGRATION.md](./MIGRATION.md)** - Migration guide from local to centralized actions
+- **[QUICKSTART.md](./QUICKSTART.md)** - Quick start guide for new services
+- **[COMPARISON.md](./COMPARISON.md)** - Before/after comparison
 
 ## 📋 Action Details
 
@@ -199,7 +280,7 @@ jobs:
         run: echo "semver=v1.0.0" >> $GITHUB_OUTPUT
       
       - name: Build amd64
-        uses: hydn-co/build-tools/actions/build-app@v1
+        uses: hydn-co/build-tools/.github/actions/build-app@v1
         with:
           app: authd
           arch: amd64
@@ -208,7 +289,7 @@ jobs:
           org: hydn-co
       
       - name: Build arm64
-        uses: hydn-co/build-tools/actions/build-app@v1
+        uses: hydn-co/build-tools/.github/actions/build-app@v1
         with:
           app: authd
           arch: arm64
@@ -217,7 +298,7 @@ jobs:
           org: hydn-co
       
       - name: Create Manifest
-        uses: hydn-co/build-tools/actions/build-manifest@v1
+        uses: hydn-co/build-tools/.github/actions/build-manifest@v1
         with:
           registry: ghcr.io
           org: hydn-co
@@ -259,14 +340,14 @@ jobs:
         run: echo "semver=v1.0.0" >> $GITHUB_OUTPUT
       
       - name: Deploy Infrastructure
-        uses: hydn-co/build-tools/actions/deploy-bicep@v1
+        uses: hydn-co/build-tools/.github/actions/deploy-bicep@v1
         with:
           environment: ${{ inputs.environment }}
           name: mesh-auth
           semver: ${{ steps.version.outputs.semver }}
       
       - name: Import Container
-        uses: hydn-co/build-tools/actions/deploy-image@v1
+        uses: hydn-co/build-tools/.github/actions/deploy-image@v1
         with:
           org: hydn-co
           package: mesh-authd
@@ -275,6 +356,14 @@ jobs:
           ghcr_user: ${{ github.actor }}
           ghcr_token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+## 📚 Documentation
+
+For comprehensive documentation, see the [docs/](./docs/) directory:
+
+- **[Advanced Features](./docs/advanced-features.md)** - Comprehensive outputs, caching, and advanced workflows
+- **[Error Handling](./docs/error-handling.md)** - Validation, resilience, and troubleshooting
+- **[Security](./docs/security.md)** - Best practices for secure deployments and secret handling
 
 ## 📚 Additional Resources
 
