@@ -1,0 +1,67 @@
+name: "Build Multi-Arch Manifest"
+description: "Creates a multi-architecture image manifest from per-arch images"
+
+inputs:
+  registry:
+    description: "Container registry URL (e.g., ghcr.io)"
+    required: true
+  org:
+    description: "Organization or namespace in the registry (e.g., hydn-co)"
+    required: true
+  app:
+    description: "Application name (e.g., authd, brokerd, streamd, apigwd, workerd)"
+    required: true
+  semver:
+    description: "Semantic version tag (e.g., v1.2.3)"
+    required: true
+
+outputs:
+  manifest:
+    description: "Full image reference for the created manifest (registry/org/app:tag)"
+    value: ${{ steps.manifest.outputs.manifest }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create Multi-Arch Manifest For ${{ inputs.app }}
+      id: manifest
+      shell: bash
+      env:
+        SEMVER: ${{ inputs.semver }}
+        IMAGE: ${{ inputs.registry }}/${{ inputs.org }}/mesh-${{ inputs.app }}
+      run: |
+        set -euo pipefail
+
+        echo "🔗 Checking multi-arch manifest for $IMAGE:$SEMVER"
+
+        # If manifest already exists, exit early
+        if docker manifest inspect "$IMAGE:$SEMVER" >/dev/null 2>&1; then
+          echo "✅ Manifest already exists: $IMAGE:$SEMVER"
+          echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Verify both architecture images exist
+        missing_arches=()
+        for arch in amd64 arm64; do
+          if docker buildx imagetools inspect "$IMAGE:$SEMVER-$arch" >/dev/null 2>&1; then
+            echo "✅ Found $IMAGE:$SEMVER-$arch"
+          else
+            echo "⚠️  Missing $IMAGE:$SEMVER-$arch"
+            missing_arches+=("$arch")
+          fi
+        done
+
+        # Create manifest if all images exist
+        if [ ${#missing_arches[@]} -eq 0 ]; then
+          echo "🚀 Creating multi-arch manifest $IMAGE:$SEMVER"
+          docker buildx imagetools create \
+            --tag "$IMAGE:$SEMVER" \
+            "$IMAGE:$SEMVER-amd64" \
+            "$IMAGE:$SEMVER-arm64"
+          echo "✅ Manifest created: $IMAGE:$SEMVER"
+          echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
+        else
+          echo "❌ Cannot create manifest, missing architecture(s): ${missing_arches[*]}"
+          exit 1
+        fi

@@ -1,0 +1,45 @@
+name: "Build App"
+description: "Builds and pushes a single-architecture container image for a mesh application"
+
+inputs:
+  app:
+    description: "Application name (e.g., authd, brokerd, streamd, apigwd, workerd)"
+    required: true
+  arch:
+    description: "Target architecture (amd64 or arm64)"
+    required: true
+  semver:
+    description: "Semantic version tag (e.g., v1.2.3)"
+    required: true
+  registry:
+    description: "Container registry URL (e.g., ghcr.io)"
+    required: true
+  org:
+    description: "Organization or namespace in the registry (e.g., hydn-co)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build and Push ${{ inputs.app }} (${{ inputs.arch }})
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.registry }}/${{ inputs.org }}/mesh-${{ inputs.app }}
+        ARCH: ${{ inputs.arch }}
+        SEMVER: ${{ inputs.semver }}
+      run: |
+        set -euo pipefail
+
+        echo "📦 Checking if $IMAGE:$SEMVER-$ARCH exists in registry..."
+        
+        if docker manifest inspect "$IMAGE:$SEMVER-$ARCH" >/dev/null 2>&1; then
+          echo "✅ Image $IMAGE:$SEMVER-$ARCH already exists, skipping build."
+        else
+          echo "🚀 Building and pushing $IMAGE:$SEMVER-$ARCH"
+          docker build \
+            -f "cmd/${{ inputs.app }}/Dockerfile" \
+            --build-arg SEMVER="$SEMVER" \
+            --tag "$IMAGE:$SEMVER-$ARCH" .
+          docker push "$IMAGE:$SEMVER-$ARCH"
+          echo "✅ Successfully pushed $IMAGE:$SEMVER-$ARCH"
+        fi
