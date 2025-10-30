@@ -181,7 +181,7 @@ Removes old pre-release container images from GHCR, keeping only the latest N. N
 - ✅ **Single source of truth**: Update once, applies everywhere
 - ✅ **Consistency**: All projects use identical, tested actions
 - ✅ **Maintainability**: Bug fixes and improvements in one place
-- ✅ **Versioning**: Pin to specific versions with `@v1`, `@main`, or commit SHA
+- ✅ **Versioning**: Pin to specific versions with `@main`, `@v1`, or commit SHA
 - ✅ **Resilient**: Input validation and error handling with clear diagnostics
 - ✅ **Fail-fast**: Pre-flight checks catch issues before expensive operations
 
@@ -229,11 +229,11 @@ These actions expect:
 
 This repository follows semantic versioning:
 
-- **`@main`**: Latest development version (bleeding edge)
-- **`@v1`**: Latest stable v1.x.x (recommended)
+- **`@main`**: Latest development version (recommended for getting latest features)
+- **`@v1`**: Latest stable v1.x.x (for production stability)
 - **`@v1.2.3`**: Specific version (maximum stability)
 
-**Recommendation**: Use `@v1` for production workflows to get bug fixes while maintaining compatibility.
+**Recommendation**: Use `@main` for most workflows to get the latest features and improvements.
 
 ## 🤝 Contributing
 
@@ -280,7 +280,7 @@ jobs:
         run: echo "semver=v1.0.0" >> $GITHUB_OUTPUT
       
       - name: Build amd64
-        uses: hydn-co/build-tools/.github/actions/build-app@v1
+        uses: hydn-co/build-tools/.github/actions/build-app@main
         with:
           app: authd
           arch: amd64
@@ -289,7 +289,7 @@ jobs:
           org: hydn-co
       
       - name: Build arm64
-        uses: hydn-co/build-tools/.github/actions/build-app@v1
+        uses: hydn-co/build-tools/.github/actions/build-app@main
         with:
           app: authd
           arch: arm64
@@ -298,7 +298,7 @@ jobs:
           org: hydn-co
       
       - name: Create Manifest
-        uses: hydn-co/build-tools/.github/actions/build-manifest@v1
+        uses: hydn-co/build-tools/.github/actions/build-manifest@main
         with:
           registry: ghcr.io
           org: hydn-co
@@ -340,14 +340,14 @@ jobs:
         run: echo "semver=v1.0.0" >> $GITHUB_OUTPUT
       
       - name: Deploy Infrastructure
-        uses: hydn-co/build-tools/.github/actions/deploy-bicep@v1
+        uses: hydn-co/build-tools/.github/actions/deploy-bicep@main
         with:
           environment: ${{ inputs.environment }}
           name: mesh-auth
           semver: ${{ steps.version.outputs.semver }}
       
       - name: Import Container
-        uses: hydn-co/build-tools/.github/actions/deploy-image@v1
+        uses: hydn-co/build-tools/.github/actions/deploy-image@main
         with:
           org: hydn-co
           package: mesh-authd

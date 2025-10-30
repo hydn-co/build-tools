@@ -209,12 +209,12 @@ All actions provide comprehensive logging for security audits:
 #### Source Verification
 
 ```yaml
-# ✅ Pin to specific version or commit
+# ✅ Use @main for latest features (recommended)
+- uses: hydn-co/build-tools/.github/actions/build-app@main
+
+# ✅ Pin to specific version for maximum stability
 - uses: hydn-co/build-tools/.github/actions/build-app@v1.0.0
 - uses: hydn-co/build-tools/.github/actions/build-app@abc123def
-
-# ⚠️  Development only - use @main for rapid iteration
-- uses: hydn-co/build-tools/.github/actions/build-app@main
 
 # ❌ Never use unpinned third-party actions
 - uses: some-random-org/action  # NO VERSION = DANGEROUS
@@ -301,10 +301,10 @@ Use this checklist when setting up new services:
     contents: read  # Explicit, not inherited
   ```
 
-- [ ] **Pin action versions**
+- [ ] **Use recommended action versions**
   ```yaml
-  uses: hydn-co/build-tools/.github/actions/build-app@v1
-  # Not: @main (except during development)
+  uses: hydn-co/build-tools/.github/actions/build-app@main
+  # Recommended: @main for latest features
   ```
 
 - [ ] **Environment protection rules**
