@@ -5,9 +5,11 @@ Welcome to the mesh ecosystem build tools documentation! This directory contains
 ## 📚 Documentation Index
 
 ### Getting Started
+
 - [README](../README.md) - Main overview and quick start guide
 
 ### Features & Usage
+
 - [Advanced Features](./advanced-features.md) - Comprehensive outputs, caching, and advanced workflows
 - [Error Handling](./error-handling.md) - Validation, resilience, and troubleshooting
 - [Security](./security.md) - Best practices for secure deployments and secret handling
@@ -15,14 +17,13 @@ Welcome to the mesh ecosystem build tools documentation! This directory contains
 ## 🚀 Quick Links
 
 ### Available Actions
+
 - **Container Build Actions**
   - `.github/actions/build-app` - Single-architecture container builds
   - `.github/actions/build-manifest` - Multi-architecture manifest creation
-  
 - **Deployment Actions**
   - `.github/actions/deploy-bicep` - Azure Bicep template deployment
   - `.github/actions/deploy-image` - Container image deployment
-  
 - **Utility Actions**
   - `.github/actions/create-tag` - Git tag creation and management
   - `.github/actions/prune-packages` - Container registry cleanup
@@ -38,6 +39,7 @@ Welcome to the mesh ecosystem build tools documentation! This directory contains
 ## 🤝 Contributing
 
 When adding new actions or features, please update the relevant documentation:
+
 - Add new actions to this index
 - Document error handling patterns in `error-handling.md`
 - Include security considerations in `security.md`
@@ -46,6 +48,7 @@ When adding new actions or features, please update the relevant documentation:
 ## 📞 Support
 
 For questions or issues:
+
 1. Check the relevant documentation section
 2. Review action-specific error messages
 3. Open an issue in the repository

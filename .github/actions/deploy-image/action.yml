@@ -49,7 +49,7 @@ runs:
         GHCR_TOKEN: ${{ inputs.ghcr_token }}
       run: |
         set -euo pipefail
-        
+
         # Validate inputs
         echo "🔍 Validating inputs..."
         if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -88,14 +88,14 @@ runs:
         if [ -z "$TARGET_REPO" ]; then
           TARGET_REPO="$PACKAGE"
         fi
-        
+
         SOURCE="ghcr.io/$ORG/$PACKAGE:$SEMVER"
         IMAGE="$TARGET_REPO:$SEMVER"
         ACR_FQDN=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
         ACR_IMAGE="$ACR_FQDN/$IMAGE"
-        
+
         echo "📦 Checking if $ACR_NAME/$IMAGE exists..."
-        
+
         if az acr repository show --name "$ACR_NAME" --image "$IMAGE" >/dev/null 2>&1; then
           echo "✅ Image $ACR_NAME/$IMAGE already exists, skipping import."
           

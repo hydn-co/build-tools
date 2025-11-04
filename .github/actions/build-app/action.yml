@@ -83,7 +83,7 @@ runs:
 
         # Resolve Dockerfile path (replace {app} placeholder)
         DOCKERFILE="${DOCKERFILE_PATH//\{app\}/$APP}"
-        
+
         # Verify Dockerfile exists
         if [[ ! -f "$DOCKERFILE" ]]; then
           echo " ERROR: Dockerfile not found at $DOCKERFILE"
