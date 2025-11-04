@@ -1,9 +1,9 @@
-name: "Build App"
-description: "Builds and pushes a single-architecture container image for a mesh application"
+﻿name: "Build App"
+description: "Builds and pushes a single-architecture container image for an application"
 
 inputs:
   app:
-    description: "Application name (e.g., authd, brokerd, streamd, apigwd, workerd)"
+    description: "Application name (e.g., authd, api, worker)"
     required: true
   arch:
     description: "Target architecture (amd64 or arm64)"
@@ -17,6 +17,18 @@ inputs:
   org:
     description: "Organization or namespace in the registry (e.g., hydn-co)"
     required: true
+  image-prefix:
+    description: "Prefix for image name (e.g., mesh-, liteiga-). Use empty string for no prefix."
+    required: false
+    default: "mesh-"
+  dockerfile-path:
+    description: "Path to Dockerfile relative to repository root (e.g., cmd/{app}/Dockerfile or backend/cmd/{app}/Dockerfile). Use {app} as placeholder."
+    required: false
+    default: "cmd/{app}/Dockerfile"
+  build-context:
+    description: "Docker build context directory"
+    required: false
+    default: "."
   cache-from:
     description: "Cache source for Docker build (e.g., type=registry,ref=image:cache)"
     required: false
@@ -28,7 +40,7 @@ inputs:
 
 outputs:
   image:
-    description: "Full image reference (registry/org/mesh-app:semver-arch)"
+    description: "Full image reference (registry/org/prefix-app:semver-arch)"
     value: ${{ steps.build.outputs.image }}
   digest:
     description: "Image digest (sha256:...)"
@@ -44,53 +56,64 @@ runs:
       id: build
       shell: bash
       env:
-        IMAGE: ${{ inputs.registry }}/${{ inputs.org }}/mesh-${{ inputs.app }}
+        APP: ${{ inputs.app }}
+        IMAGE_PREFIX: ${{ inputs.image-prefix }}
+        REGISTRY: ${{ inputs.registry }}
+        ORG: ${{ inputs.org }}
         ARCH: ${{ inputs.arch }}
         SEMVER: ${{ inputs.semver }}
+        DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
+        BUILD_CONTEXT: ${{ inputs.build-context }}
         CACHE_FROM: ${{ inputs.cache-from }}
         CACHE_TO: ${{ inputs.cache-to }}
       run: |
         set -euo pipefail
 
         # Validate inputs
-        echo "🔍 Validating inputs..."
+        echo " Validating inputs..."
         if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
-          echo "❌ ERROR: Invalid architecture '$ARCH'. Must be 'amd64' or 'arm64'."
+          echo " ERROR: Invalid architecture '\''$ARCH'\''. Must be '\''amd64'\'' or '\''arm64'\''."
           exit 1
         fi
 
         if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected format: v1.2.3"
+          echo " ERROR: Invalid semver format '\''$SEMVER'\''. Expected format: v1.2.3"
           exit 1
         fi
 
+        # Resolve Dockerfile path (replace {app} placeholder)
+        DOCKERFILE="${DOCKERFILE_PATH//\{app\}/$APP}"
+        
         # Verify Dockerfile exists
-        DOCKERFILE="cmd/${{ inputs.app }}/Dockerfile"
         if [[ ! -f "$DOCKERFILE" ]]; then
-          echo "❌ ERROR: Dockerfile not found at $DOCKERFILE"
-          echo "   Available cmd directories:"
-          ls -la cmd/ 2>/dev/null || echo "   cmd/ directory not found"
+          echo " ERROR: Dockerfile not found at $DOCKERFILE"
+          echo "   Current directory: $(pwd)"
+          echo "   Looking for: $DOCKERFILE"
+          echo "   Available directories:"
+          ls -la 2>/dev/null || echo "   (unable to list)"
           exit 1
         fi
 
-        # Full image reference
+        # Construct image name
+        IMAGE="$REGISTRY/$ORG/${IMAGE_PREFIX}${APP}"
         IMAGE_REF="$IMAGE:$SEMVER-$ARCH"
-        
-        echo "📦 Checking if $IMAGE_REF exists in registry..."
-        
+
+        echo " Checking if $IMAGE_REF exists in registry..."
+
         if docker manifest inspect "$IMAGE_REF" >/dev/null 2>&1; then
-          echo "✅ Image $IMAGE_REF already exists, skipping build."
-          
+          echo " Image $IMAGE_REF already exists, skipping build."
+
           # Get existing image digest
-          DIGEST=$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
-          
+          DIGEST=$(docker buildx imagetools inspect "$IMAGE_REF" --format '\''{{json .Manifest}}'\'' | jq -r '\''.digest // empty'\'' 2>/dev/null || echo "")
+
           # Set outputs
           echo "image=$IMAGE_REF" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "exists=true" >> "$GITHUB_OUTPUT"
         else
-          echo "🚀 Building $IMAGE_REF from $DOCKERFILE"
-          
+          echo " Building $IMAGE_REF from $DOCKERFILE"
+          echo "   Build context: $BUILD_CONTEXT"
+
           # Prepare build arguments
           BUILD_ARGS=(
             "-f" "$DOCKERFILE"
@@ -98,46 +121,47 @@ runs:
             "--tag" "$IMAGE_REF"
             "--push"
           )
-          
+
           # Add cache configuration if provided
           if [[ -n "$CACHE_FROM" ]]; then
-            echo "📦 Using build cache from: $CACHE_FROM"
+            echo " Using build cache from: $CACHE_FROM"
             BUILD_ARGS+=("--cache-from" "$CACHE_FROM")
           fi
-          
+
           if [[ -n "$CACHE_TO" ]]; then
-            echo "📤 Exporting build cache to: $CACHE_TO"
+            echo " Exporting build cache to: $CACHE_TO"
             BUILD_ARGS+=("--cache-to" "$CACHE_TO")
           fi
-          
+
           # Build with retry logic (3 attempts)
           MAX_ATTEMPTS=3
           ATTEMPT=1
-          
+
           while [[ $ATTEMPT -le $MAX_ATTEMPTS ]]; do
-            echo "� Build attempt $ATTEMPT/$MAX_ATTEMPTS..."
-            
-            if docker buildx build "${BUILD_ARGS[@]}" .; then
-              echo "✅ Successfully built and pushed $IMAGE_REF"
-              
+            echo " Build attempt $ATTEMPT/$MAX_ATTEMPTS..."
+
+            if docker buildx build "${BUILD_ARGS[@]}" "$BUILD_CONTEXT"; then
+              echo " Successfully built and pushed $IMAGE_REF"
+
               # Get image digest
-              DIGEST=$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
-              
+              DIGEST=$(docker buildx imagetools inspect "$IMAGE_REF" --format '\''{{json .Manifest}}'\'' | jq -r '\''.digest // empty'\'' 2>/dev/null || echo "")
+
               # Set outputs
               echo "image=$IMAGE_REF" >> "$GITHUB_OUTPUT"
               echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
               echo "exists=false" >> "$GITHUB_OUTPUT"
-              
+
               exit 0
             else
               if [[ $ATTEMPT -lt $MAX_ATTEMPTS ]]; then
-                echo "⚠️  Build failed, retrying in 10 seconds..."
+                echo "  Build failed, retrying in 10 seconds..."
                 sleep 10
                 ((ATTEMPT++))
               else
-                echo "❌ ERROR: Docker build failed after $MAX_ATTEMPTS attempts"
+                echo " ERROR: Docker build failed after $MAX_ATTEMPTS attempts"
                 echo "   Image: $IMAGE_REF"
                 echo "   Dockerfile: $DOCKERFILE"
+                echo "   Build context: $BUILD_CONTEXT"
                 echo "   Build arg SEMVER: $SEMVER"
                 exit 1
               fi
