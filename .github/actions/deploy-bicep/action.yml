@@ -1,4 +1,4 @@
-﻿name: "Deploy Bicep Template"
+name: "Deploy Bicep Template"
 description: "Deploys Azure Bicep template using subscription-scoped deployment"
 
 inputs:
@@ -67,33 +67,33 @@ runs:
         set -euo pipefail
         
         # Validate inputs
-        echo "ðŸ” Validating inputs..."
+        echo "🔍 Validating inputs..."
         if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-          echo "âŒ ERROR: Invalid semver format '$SEMVER'. Expected format: v1.2.3"
+          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected format: v1.2.3"
           exit 1
         fi
 
         if [[ ! "$APPLY_CERTS" =~ ^(true|false)$ ]]; then
-          echo "âŒ ERROR: Invalid applyCerts value '$APPLY_CERTS'. Must be 'true' or 'false'."
+          echo "❌ ERROR: Invalid applyCerts value '$APPLY_CERTS'. Must be 'true' or 'false'."
           exit 1
         fi
 
         if [[ ! "$VERIFY_DEPLOYMENT" =~ ^(true|false)$ ]]; then
-          echo "âŒ ERROR: Invalid verify-deployment value '$VERIFY_DEPLOYMENT'. Must be 'true' or 'false'."
+          echo "❌ ERROR: Invalid verify-deployment value '$VERIFY_DEPLOYMENT'. Must be 'true' or 'false'."
           exit 1
         fi
 
         # Verify Azure CLI is logged in
-        echo "ðŸ” Verifying Azure CLI authentication..."
+        echo "🔍 Verifying Azure CLI authentication..."
         if ! az account show >/dev/null 2>&1; then
-          echo "âŒ ERROR: Not logged in to Azure CLI"
+          echo "❌ ERROR: Not logged in to Azure CLI"
           echo "   Run 'az login' or ensure OIDC authentication is configured."
           exit 1
         fi
 
         SUBSCRIPTION=$(az account show --query name -o tsv)
         SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-        echo "âœ… Authenticated to subscription: $SUBSCRIPTION"
+        echo "✅ Authenticated to subscription: $SUBSCRIPTION"
         
         # Determine parameters file path
         if [[ "$PARAMETERS" == *.bicepparam ]]; then
@@ -104,7 +104,7 @@ runs:
         
         # Verify template file exists
         if [[ ! -f "$TEMPLATE" ]]; then
-          echo "âŒ ERROR: Bicep template not found at $TEMPLATE"
+          echo "❌ ERROR: Bicep template not found at $TEMPLATE"
           echo "   Current directory: $(pwd)"
           ls -la .deploy/bicep/ 2>/dev/null || echo "   .deploy/bicep/ directory not found"
           exit 1
@@ -112,13 +112,13 @@ runs:
 
         # Verify parameters file exists
         if [[ ! -f "$PARAMS_FILE" ]]; then
-          echo "âŒ ERROR: Parameters file not found at $PARAMS_FILE"
+          echo "❌ ERROR: Parameters file not found at $PARAMS_FILE"
           echo "   Available parameter files:"
           ls -la "${PARAMETERS}/" 2>/dev/null || echo "   ${PARAMETERS}/ directory not found"
           exit 1
         fi
 
-        echo "ðŸš€ Deploying Bicep template"
+        echo "🚀 Deploying Bicep template"
         echo "  Name: $NAME"
         echo "  Location: $LOCATION"
         echo "  Template: $TEMPLATE"
@@ -135,7 +135,7 @@ runs:
             sharedOnly="$SHARED_ONLY" \
             semver="$SEMVER"; then
           echo ""
-          echo "âŒ ERROR: Bicep deployment failed"
+          echo "❌ ERROR: Bicep deployment failed"
           echo "   Deployment name: $NAME"
           echo "   Location: $LOCATION"
           echo "   Template: $TEMPLATE"
@@ -156,7 +156,7 @@ runs:
         # Verify deployment if requested
         if [[ "$VERIFY_DEPLOYMENT" == "true" ]]; then
           echo ""
-          echo "ðŸ” Verifying deployment status..."
+          echo "🔍 Verifying deployment status..."
           
           PROVISIONING_STATE=$(az deployment sub show \
             --name "$NAME" \
@@ -166,7 +166,7 @@ runs:
           echo "provisioning-state=$PROVISIONING_STATE" >> "$GITHUB_OUTPUT"
           
           if [[ "$PROVISIONING_STATE" == "Succeeded" ]]; then
-            echo "âœ… Deployment verified: $PROVISIONING_STATE"
+            echo "✅ Deployment verified: $PROVISIONING_STATE"
             
             # Show deployment outputs if any
             OUTPUTS=$(az deployment sub show \
@@ -176,14 +176,14 @@ runs:
             
             if [[ "$OUTPUTS" != "{}" ]]; then
               echo ""
-              echo "ðŸ“¤ Deployment outputs:"
+              echo "📤 Deployment outputs:"
               echo "$OUTPUTS" | jq '.'
             fi
           else
-            echo "âš ï¸  Warning: Deployment state is $PROVISIONING_STATE"
+            echo "⚠️  Warning: Deployment state is $PROVISIONING_STATE"
           fi
         else
           echo "provisioning-state=NotVerified" >> "$GITHUB_OUTPUT"
         fi
         
-        echo "âœ… Deployment completed successfully"
+        echo "✅ Deployment completed successfully"
