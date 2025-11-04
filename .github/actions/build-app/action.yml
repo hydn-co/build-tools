@@ -144,7 +144,7 @@ runs:
               echo " Successfully built and pushed $IMAGE_REF"
 
               # Get image digest
-              DIGEST=$(docker buildx imagetools inspect "$IMAGE_REF" --format '\''{{json .Manifest}}'\'' | jq -r '\''.digest // empty'\'' 2>/dev/null || echo "")
+              DIGEST=$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
 
               # Set outputs
               echo "image=$IMAGE_REF" >> "$GITHUB_OUTPUT"
