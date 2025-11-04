@@ -62,8 +62,8 @@ runs:
         if docker manifest inspect "$IMAGE:$SEMVER" >/dev/null 2>&1; then
           echo "Manifest already exists: $IMAGE:$SEMVER"
           
-          DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format {{json .Manifest}} | jq -r .digest // empty 2>/dev/null || echo "")
-          ARCHES=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format {{json .Manifest}} | jq -r .manifests[].platform.architecture 2>/dev/null | tr \\n , | sed s/,$//)
+            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
+            ARCHES=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.manifests[].platform.architecture' 2>/dev/null | tr '\n' ',' | sed 's/,$//')
           
           echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
@@ -99,7 +99,7 @@ runs:
 
           echo "Manifest created: $IMAGE:$SEMVER"
           
-          DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format {{json .Manifest}} | jq -r .digest // empty 2>/dev/null || echo "")
+            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
           ARCHES="amd64,arm64"
           
           echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
