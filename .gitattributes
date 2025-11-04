@@ -1,0 +1,25 @@
+# Enforce consistent LF line endings for text files to avoid CI/platform differences
+* text=auto
+
+# YAML and GitHub Actions
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Shell scripts and action run blocks
+*.sh text eol=lf
+
+# Bicep templates and parameter files
+*.bicep text eol=lf
+*.bicepparam text eol=lf
+
+# JSON and markdown
+*.json text eol=lf
+*.md text eol=lf
+
+# Ensure binary files remain binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.zip binary
+*.tar.gz binary

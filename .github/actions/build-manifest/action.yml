@@ -1,0 +1,117 @@
+﻿name: "Build Multi-Arch Manifest"
+description: "Creates a multi-architecture image manifest from per-arch images"
+
+inputs:
+  registry:
+    description: "Container registry URL (e.g., ghcr.io)"
+    required: true
+  org:
+    description: "Organization or namespace in the registry (e.g., hydn-co)"
+    required: true
+  app:
+    description: "Application name (e.g., authd, api, worker)"
+    required: true
+  semver:
+    description: "Semantic version tag (e.g., v1.2.3)"
+    required: true
+  image-prefix:
+    description: "Prefix for image name (e.g., mesh-, liteiga-). Use empty string for no prefix."
+    required: false
+    default: "mesh-"
+  wait-for-images:
+    description: "Maximum seconds to wait for arch images to become available (0 = no wait)"
+    required: false
+    default: "300"
+
+outputs:
+  manifest:
+    description: "Full image reference for the created manifest (registry/org/prefix-app:tag)"
+    value: ${{ steps.manifest.outputs.manifest }}
+  digest:
+    description: "Manifest digest (sha256:...)"
+    value: ${{ steps.manifest.outputs.digest }}
+  architectures:
+    description: "Comma-separated list of architectures in manifest"
+    value: ${{ steps.manifest.outputs.architectures }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create Multi-Arch Manifest For ${{ inputs.app }}
+      id: manifest
+      shell: bash
+      env:
+        SEMVER: ${{ inputs.semver }}
+        REGISTRY: ${{ inputs.registry }}
+        ORG: ${{ inputs.org }}
+        APP: ${{ inputs.app }}
+        IMAGE_PREFIX: ${{ inputs.image-prefix }}
+      run: |
+        set -euo pipefail
+
+        IMAGE="$REGISTRY/$ORG/${IMAGE_PREFIX}${APP}"
+
+        echo "Validating inputs..."
+        if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+          echo "ERROR: Invalid semver format $SEMVER. Expected format: v1.2.3"
+          exit 1
+        fi
+
+        echo "Checking multi-arch manifest for $IMAGE:$SEMVER"
+
+        if docker manifest inspect "$IMAGE:$SEMVER" >/dev/null 2>&1; then
+          echo "Manifest already exists: $IMAGE:$SEMVER"
+          
+            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
+            ARCHES=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.manifests[].platform.architecture' 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+          
+          echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "architectures=$ARCHES" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "Verifying architecture-specific images exist..."
+        missing_arches=()
+        for arch in amd64 arm64; do
+          if docker buildx imagetools inspect "$IMAGE:$SEMVER-$arch" >/dev/null 2>&1; then
+            echo "Found $IMAGE:$SEMVER-$arch"
+          else
+            echo "Missing $IMAGE:$SEMVER-$arch"
+            missing_arches+=("$arch")
+          fi
+        done
+
+        if [ ${#missing_arches[@]} -eq 0 ]; then
+          echo "Creating multi-arch manifest $IMAGE:$SEMVER"
+
+          if ! docker buildx imagetools create \
+            --tag "$IMAGE:$SEMVER" \
+            "$IMAGE:$SEMVER-amd64" \
+            "$IMAGE:$SEMVER-arm64"; then
+            echo "ERROR: Failed to create manifest"
+            echo "   Target: $IMAGE:$SEMVER"
+            echo "   Sources:"
+            echo "     - $IMAGE:$SEMVER-amd64"
+            echo "     - $IMAGE:$SEMVER-arm64"
+            exit 1
+          fi
+
+          echo "Manifest created: $IMAGE:$SEMVER"
+          
+            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
+          ARCHES="amd64,arm64"
+          
+          echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "architectures=$ARCHES" >> "$GITHUB_OUTPUT"
+        else
+          echo "ERROR: Cannot create manifest - missing architecture images"
+          echo "   Missing: ${missing_arches[*]}"
+          echo "   Expected images:"
+          echo "     - $IMAGE:$SEMVER-amd64"
+          echo "     - $IMAGE:$SEMVER-arm64"
+          echo ""
+          echo "   Ensure the build job completed successfully for all architectures."
+          exit 1
+        fi
