@@ -15,6 +15,10 @@ inputs:
     description: "Whether to apply certificates (true/false)"
     required: false
     default: "false"
+  sharedOnly:
+    description: "Whether to deploy only shared resources (true/false)"
+    required: false
+    default: "false"
   location:
     description: "Azure region for deployment metadata"
     required: false
@@ -56,6 +60,7 @@ runs:
         PARAMETERS: ${{ inputs.parameters }}
         ENVIRONMENT: ${{ inputs.environment }}
         APPLY_CERTS: ${{ inputs.applyCerts }}
+        SHARED_ONLY: ${{ inputs.sharedOnly }}
         SEMVER: ${{ inputs.semver }}
         VERIFY_DEPLOYMENT: ${{ inputs.verify-deployment }}
       run: |
@@ -127,6 +132,7 @@ runs:
           --template-file "$TEMPLATE" \
           --parameters "$PARAMS_FILE" \
             applyCerts="$APPLY_CERTS" \
+            sharedOnly="$SHARED_ONLY" \
             semver="$SEMVER"; then
           echo ""
           echo "âŒ ERROR: Bicep deployment failed"
