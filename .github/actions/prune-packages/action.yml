@@ -71,7 +71,7 @@ runs:
 
         # GitHub API endpoint for packages
         API_URL="https://api.github.com/orgs/$ORG/packages"
-        
+
         # Fetch all container packages
         PACKAGES=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
@@ -283,7 +283,7 @@ runs:
         echo "   Packages processed: $PACKAGES_PROCESSED"
         echo "   Total versions found: $TOTAL_VERSIONS"
         echo "   Versions deleted: $TOTAL_DELETED"
-        
+
         if [[ "$DRY_RUN" == "true" ]]; then
           echo ""
           echo "🔍 This was a DRY RUN - no packages were actually deleted"

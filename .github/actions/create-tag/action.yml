@@ -63,7 +63,7 @@ runs:
 
         # Check if tag already exists
         echo "🔍 Checking if tag '$SEMVER' exists..."
-        
+
         # Fetch tags from remote to ensure we have the latest
         if [[ "$PUSH" == "true" ]]; then
           echo "📥 Fetching tags from remote..."

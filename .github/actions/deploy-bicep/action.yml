@@ -15,6 +15,10 @@ inputs:
     description: "Whether to apply certificates (true/false)"
     required: false
     default: "false"
+  sharedOnly:
+    description: "Whether to deploy only shared resources (true/false)"
+    required: false
+    default: "false"
   location:
     description: "Azure region for deployment metadata"
     required: false
@@ -26,7 +30,7 @@ inputs:
   parameters:
     description: "Path to Bicep parameters file (will append environment if not full path)"
     required: false
-    default: "./.deploy/bicep/parameters"
+    default: "./.deploy/bicep/params"
   verify-deployment:
     description: "Whether to verify deployment status after completion (true/false)"
     required: false
@@ -56,11 +60,12 @@ runs:
         PARAMETERS: ${{ inputs.parameters }}
         ENVIRONMENT: ${{ inputs.environment }}
         APPLY_CERTS: ${{ inputs.applyCerts }}
+        SHARED_ONLY: ${{ inputs.sharedOnly }}
         SEMVER: ${{ inputs.semver }}
         VERIFY_DEPLOYMENT: ${{ inputs.verify-deployment }}
       run: |
         set -euo pipefail
-        
+
         # Validate inputs
         echo "🔍 Validating inputs..."
         if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -89,14 +94,14 @@ runs:
         SUBSCRIPTION=$(az account show --query name -o tsv)
         SUBSCRIPTION_ID=$(az account show --query id -o tsv)
         echo "✅ Authenticated to subscription: $SUBSCRIPTION"
-        
+
         # Determine parameters file path
         if [[ "$PARAMETERS" == *.bicepparam ]]; then
           PARAMS_FILE="$PARAMETERS"
         else
           PARAMS_FILE="${PARAMETERS}/${ENVIRONMENT}.bicepparam"
         fi
-        
+
         # Verify template file exists
         if [[ ! -f "$TEMPLATE" ]]; then
           echo "❌ ERROR: Bicep template not found at $TEMPLATE"
@@ -120,13 +125,14 @@ runs:
         echo "  Parameters: $PARAMS_FILE"
         echo "  Version: $SEMVER"
         echo "  Apply Certs: $APPLY_CERTS"
-        
+
         if ! az deployment sub create \
           --name "$NAME" \
           --location "$LOCATION" \
           --template-file "$TEMPLATE" \
           --parameters "$PARAMS_FILE" \
             applyCerts="$APPLY_CERTS" \
+            sharedOnly="$SHARED_ONLY" \
             semver="$SEMVER"; then
           echo ""
           echo "❌ ERROR: Bicep deployment failed"
@@ -139,14 +145,14 @@ runs:
           echo "   https://portal.azure.com/#view/HubsExtension/DeploymentDetailsBlade/~/overview/id/%2Fsubscriptions%2F$SUBSCRIPTION_ID%2Fproviders%2FMicrosoft.Resources%2Fdeployments%2F$NAME"
           exit 1
         fi
-        
+
         # Get deployment details
         DEPLOYMENT_ID="/subscriptions/$SUBSCRIPTION_ID/providers/Microsoft.Resources/deployments/$NAME"
-        
+
         # Set outputs
         echo "deployment-name=$NAME" >> "$GITHUB_OUTPUT"
         echo "deployment-id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
-        
+
         # Verify deployment if requested
         if [[ "$VERIFY_DEPLOYMENT" == "true" ]]; then
           echo ""
@@ -179,5 +185,5 @@ runs:
         else
           echo "provisioning-state=NotVerified" >> "$GITHUB_OUTPUT"
         fi
-        
+
         echo "✅ Deployment completed successfully"

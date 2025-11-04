@@ -9,6 +9,7 @@ This document describes the error handling and validation improvements made to a
 All actions now validate inputs before attempting operations:
 
 #### `build-app`
+
 - ✅ **Architecture validation**: Ensures `arch` is either `amd64` or `arm64`
 - ✅ **Semver format validation**: Verifies version follows `vX.Y.Z` pattern
 - ✅ **Dockerfile existence check**: Confirms Dockerfile exists before building
@@ -16,12 +17,14 @@ All actions now validate inputs before attempting operations:
 - ✅ **Push failure detection**: Captures registry push failures with helpful messages
 
 #### `build-manifest`
+
 - ✅ **Semver format validation**: Verifies version follows `vX.Y.Z` pattern
 - ✅ **Architecture image verification**: Checks both amd64 and arm64 images exist
 - ✅ **Manifest creation failure handling**: Provides detailed error context
 - ✅ **Clear missing image reporting**: Lists exactly which architectures are missing
 
 #### `deploy-bicep`
+
 - ✅ **Semver format validation**: Verifies version follows `vX.Y.Z` pattern
 - ✅ **Boolean validation**: Ensures `applyCerts` is `true` or `false`
 - ✅ **Azure CLI authentication check**: Verifies user is logged in before deployment
@@ -31,6 +34,7 @@ All actions now validate inputs before attempting operations:
 - ✅ **Subscription display**: Shows which Azure subscription is being used
 
 #### `deploy-image`
+
 - ✅ **Semver format validation**: Verifies version follows `vX.Y.Z` pattern
 - ✅ **Required credentials check**: Ensures GHCR username and token are provided
 - ✅ **Azure CLI authentication check**: Verifies user is logged in
@@ -46,7 +50,7 @@ All error messages follow a consistent pattern:
 ❌ ERROR: <Brief description>
    <Context details>
    <Resource information>
-   
+
    <Troubleshooting guidance>
    <Verification commands>
 ```
@@ -77,36 +81,41 @@ All error messages follow a consistent pattern:
 To verify error handling works correctly:
 
 ### Invalid Architecture
+
 ```yaml
 - uses: hydn-co/build-tools/.github/actions/build-app@main
   with:
-    arch: x86  # ❌ Will fail with clear message
+    arch: x86 # ❌ Will fail with clear message
 ```
 
 ### Missing Dockerfile
+
 ```yaml
 - uses: hydn-co/build-tools/.github/actions/build-app@main
   with:
-    app: nonexistent  # ❌ Will list available cmd/ directories
+    app: nonexistent # ❌ Will list available cmd/ directories
 ```
 
 ### Invalid Semver
+
 ```yaml
 - uses: hydn-co/build-tools/.github/actions/deploy-bicep@main
   with:
-    semver: 1.2.3  # ❌ Will fail (missing 'v' prefix)
+    semver: 1.2.3 # ❌ Will fail (missing 'v' prefix)
 ```
 
 ### Missing ACR
+
 ```yaml
 - uses: hydn-co/build-tools/.github/actions/deploy-image@main
   with:
-    acr_name: nonexistent  # ❌ Will list available ACRs
+    acr_name: nonexistent # ❌ Will list available ACRs
 ```
 
 ## Backward Compatibility
 
 All enhancements are **100% backward compatible**:
+
 - No changes to action inputs or outputs
 - Additional validations only trigger on error conditions
 - Success path behavior unchanged

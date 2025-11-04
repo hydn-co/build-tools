@@ -62,13 +62,13 @@ runs:
 
         # Get all tags sorted by creation date (newest first)
         echo "🔍 Analyzing tags..."
-        
+
         # Pre-release pattern: vX.Y.Z-{anything} (e.g., v1.2.3-alpha.1, v1.2.3-dev.20241030)
         # Stable release pattern: vX.Y.Z (no suffix)
-        
+
         STABLE_TAGS=()
         PRERELEASE_TAGS=()
-        
+
         # Read all tags into arrays
         while IFS= read -r tag; do
           if [[ -z "$tag" ]]; then
@@ -95,7 +95,7 @@ runs:
         # Determine which pre-release tags to delete
         TAGS_TO_DELETE=()
         TAGS_TO_KEEP=()
-        
+
         COUNT=0
         for tag in "${PRERELEASE_TAGS[@]}"; do
           if [[ $COUNT -lt $KEEP_COUNT ]]; then
@@ -216,7 +216,7 @@ runs:
         echo "   Pre-releases kept: ${#TAGS_TO_KEEP[@]}"
         echo "   Pre-releases deleted: $DELETED_COUNT"
         echo "   Stable releases protected: ${#STABLE_TAGS[@]}"
-        
+
         if [[ "$DRY_RUN" == "true" ]]; then
           echo ""
           echo "🔍 This was a DRY RUN - no tags were actually deleted"
