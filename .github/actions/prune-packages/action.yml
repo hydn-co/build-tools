@@ -154,12 +154,13 @@ runs:
             IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
             for TAG in "${TAG_ARRAY[@]}"; do
               # Stable release: vX.Y.Z (no suffix)
-              if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              # Stable release: vX.Y.Z (no suffix) or X.Y.Z
+              if [[ "$TAG" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
                 IS_STABLE=true
                 DISPLAY_TAG="$TAG"
                 break
-              # Pre-release: vX.Y.Z-{anything}
-              elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+              # Pre-release: vX.Y.Z-{anything} or X.Y.Z-{anything}
+              elif [[ "$TAG" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)- ]]; then
                 IS_PRERELEASE=true
                 DISPLAY_TAG="$TAG"
               fi

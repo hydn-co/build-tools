@@ -9,7 +9,7 @@ inputs:
     description: "Package name in GHCR (e.g., mesh-authd)"
     required: true
   semver:
-    description: "Specific tag/version to import"
+    description: "Specific tag/version to import (e.g., v1.2.3 or 1.2.3-alpha.1). Leading 'v' is optional."
     required: true
   acr_name:
     description: "Azure Container Registry short name (not FQDN)"
@@ -52,8 +52,9 @@ runs:
 
         # Validate inputs
         echo "🔍 Validating inputs..."
-        if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected format: v1.2.3"
+        # Accept semver with optional leading 'v' and optional prerelease/build metadata
+        if [[ ! "$SEMVER" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]]; then
+          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected a semantic version like 'v1.2.3' or '1.2.3-alpha.1'"
           exit 1
         fi
 

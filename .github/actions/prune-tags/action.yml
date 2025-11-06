@@ -63,8 +63,8 @@ runs:
         # Get all tags sorted by creation date (newest first)
         echo "🔍 Analyzing tags..."
 
-        # Pre-release pattern: vX.Y.Z-{anything} (e.g., v1.2.3-alpha.1, v1.2.3-dev.20241030)
-        # Stable release pattern: vX.Y.Z (no suffix)
+  # Pre-release pattern: vX.Y.Z-{anything} or X.Y.Z-{anything} (e.g., v1.2.3-alpha.1, 1.2.3-dev.20241030)
+  # Stable release pattern: vX.Y.Z or X.Y.Z (no suffix)
 
         STABLE_TAGS=()
         PRERELEASE_TAGS=()
@@ -76,12 +76,13 @@ runs:
           fi
           
           # Check if it's a semver tag
-          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "$tag" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             # Stable release (no suffix)
             STABLE_TAGS+=("$tag")
-          elif [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+          elif [[ "$tag" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)- ]]; then
             # Pre-release (has suffix after dash)
             PRERELEASE_TAGS+=("$tag")
+          fi
           fi
         done < <(git tag --sort=-creatordate)
 

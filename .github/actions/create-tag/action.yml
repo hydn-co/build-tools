@@ -3,7 +3,7 @@ description: "Creates an annotated Git tag for a release. Idempotent - safe to r
 
 inputs:
   semver:
-    description: "Semantic version tag to create (e.g., v1.2.3)"
+    description: "Semantic version tag to create (e.g., v1.2.3 or 1.2.3-alpha.1). Leading 'v' is optional."
     required: true
   message:
     description: "Tag annotation message (defaults to 'Release {semver}')"
@@ -40,8 +40,9 @@ runs:
 
         # Validate inputs
         echo "🔍 Validating inputs..."
-        if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected format: v1.2.3"
+        # Accept semver with optional leading 'v' and optional prerelease/build metadata
+        if [[ ! "$SEMVER" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]]; then
+          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected a semantic version like 'v1.2.3' or '1.2.3-alpha.1'"
           exit 1
         fi
 

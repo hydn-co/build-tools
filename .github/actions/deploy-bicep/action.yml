@@ -9,7 +9,7 @@ inputs:
     description: "Deployment name (will be suffixed with environment)"
     required: true
   semver:
-    description: "Semantic version to deploy"
+    description: "Semantic version to deploy (e.g., v1.2.3 or 1.2.3-alpha.1). Leading 'v' is optional."
     required: true
   applyCerts:
     description: "Whether to apply certificates (true/false)"
@@ -68,8 +68,9 @@ runs:
 
         # Validate inputs
         echo "🔍 Validating inputs..."
-        if [[ ! "$SEMVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected format: v1.2.3"
+        # Accept semver with optional leading 'v' and optional prerelease/build metadata
+        if [[ ! "$SEMVER" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]]; then
+          echo "❌ ERROR: Invalid semver format '$SEMVER'. Expected a semantic version like 'v1.2.3' or '1.2.3-alpha.1'"
           exit 1
         fi
 
