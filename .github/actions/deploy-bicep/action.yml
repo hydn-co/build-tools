@@ -15,10 +15,6 @@ inputs:
     description: "Whether to apply certificates (true/false)"
     required: false
     default: "false"
-  sharedOnly:
-    description: "Whether to deploy only shared resources (true/false)"
-    required: false
-    default: "false"
   location:
     description: "Azure region for deployment metadata"
     required: false
