@@ -62,10 +62,10 @@ runs:
 
         # Get all tags sorted by creation date (newest first)
         echo "🔍 Analyzing tags..."
-
-  # Pre-release pattern: vX.Y.Z-{anything} or X.Y.Z-{anything} (e.g., v1.2.3-alpha.1, 1.2.3-dev.20241030)
-  # Stable release pattern: vX.Y.Z or X.Y.Z (no suffix)
-
+        
+        # Pre-release pattern: vX.Y.Z-{anything} or X.Y.Z-{anything} (e.g., v1.2.3-alpha.1, 1.2.3-dev.20241030)
+        # Stable release pattern: vX.Y.Z or X.Y.Z (no suffix)
+        
         STABLE_TAGS=()
         PRERELEASE_TAGS=()
 
