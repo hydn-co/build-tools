@@ -83,7 +83,6 @@ runs:
             # Pre-release (has suffix after dash)
             PRERELEASE_TAGS+=("$tag")
           fi
-          fi
         done < <(git tag --sort=-creatordate)
 
         echo ""
