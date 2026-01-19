@@ -69,26 +69,30 @@ runs:
           echo "   Filtering packages with prefix: $PACKAGE_PREFIX"
         fi
 
-        # GitHub API endpoint for packages
-        API_URL="https://api.github.com/orgs/$ORG/packages"
+        # Use gh CLI to list packages - more reliable than REST API
+        PACKAGE_QUERY='query($org:String!, $first:Int!) { 
+          organization(login: $org) { 
+            packages(first: $first, packageType: DOCKER) { 
+              nodes { 
+                name 
+              } 
+            } 
+          } 
+        }'
 
-        # Fetch all container packages
-        PACKAGES=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github+json" \
-          "$API_URL?package_type=container&per_page=100")
-
-        if [[ "$PACKAGES" == *"Bad credentials"* ]] || [[ "$PACKAGES" == *"\"message\":"* ]]; then
+        # Fetch package names using gh CLI
+        if ! PACKAGE_DATA=$(gh api graphql -f query="$PACKAGE_QUERY" -f org="$ORG" -F first=100 2>&1); then
           echo "❌ ERROR: Failed to fetch packages"
-          echo "$PACKAGES" | jq -r '.message // "Unknown error"' 2>/dev/null || echo "$PACKAGES"
+          echo "$PACKAGE_DATA"
           exit 1
         fi
 
+        # Extract package names
+        PACKAGE_NAMES=$(echo "$PACKAGE_DATA" | jq -r '.data.organization.packages.nodes[].name' 2>/dev/null || echo "")
+
         # Filter packages by prefix if specified
         if [[ -n "$PACKAGE_PREFIX" ]]; then
-          PACKAGE_NAMES=$(echo "$PACKAGES" | jq -r --arg prefix "$PACKAGE_PREFIX" \
-            '.[] | select(.name | startswith($prefix)) | .name' 2>/dev/null || echo "")
-        else
-          PACKAGE_NAMES=$(echo "$PACKAGES" | jq -r '.[].name' 2>/dev/null || echo "")
+          PACKAGE_NAMES=$(echo "$PACKAGE_NAMES" | grep "^$PACKAGE_PREFIX" || echo "")
         fi
 
         if [[ -z "$PACKAGE_NAMES" ]]; then
@@ -116,18 +120,44 @@ runs:
 
           ((PACKAGES_PROCESSED++))
 
-          # Fetch all versions for this package
-          VERSIONS_URL="$API_URL/container/$PACKAGE_NAME/versions?per_page=100"
-          VERSIONS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$VERSIONS_URL")
+          # Fetch all versions for this package using gh CLI
+          VERSION_QUERY='query($org:String!, $name:String!, $first:Int!) {
+            organization(login: $org) {
+              packageVersion: registryPackageVersion(packageName: $name) {
+                versions(first: $first) {
+                  nodes {
+                    id
+                    version
+                    preRelease
+                    createdAt
+                  }
+                }
+              }
+            }
+          }'
 
-          # Extract version information (id, tags, created_at)
-          # Note: Each version in GHCR represents a complete multi-arch image set:
-          #   - The multi-arch manifest (e.g., v1.2.3)
-          #   - All architecture tags (e.g., v1.2.3-amd64, v1.2.3-arm64)
-          # Deleting a version removes the manifest AND all arch-specific tags atomically
-          VERSION_DATA=$(echo "$VERSIONS" | jq -r '.[] | "\(.id)|\(.metadata.container.tags | join(","))|\(.created_at)"' 2>/dev/null || echo "")
+          # Try to fetch versions - may not work with all package types
+          # Fall back to using API directly for GHCR packages
+          VERSIONS=$(gh api graphql -f query="query(\$org:String!, \$name:String!) {
+            organization(login: \$org) {
+              packages(first: 100, names: [\"\$name\"]) {
+                nodes {
+                  name
+                  versions(first: 100) {
+                    nodes {
+                      id
+                      version
+                      preRelease
+                      createdAt
+                    }
+                  }
+                }
+              }
+            }
+          }" -f org="$ORG" -f name="$PACKAGE_NAME" 2>&1 || echo '{"errors":[]}')
+
+          # Extract version information
+          VERSION_DATA=$(echo "$VERSIONS" | jq -r '.data.organization.packages.nodes[0].versions.nodes[] | "\(.id)|\(.version)|\(.preRelease)|\(.createdAt)"' 2>/dev/null || echo "")
 
           if [[ -z "$VERSION_DATA" ]]; then
             echo "⚠️  No versions found for package: $PACKAGE_NAME"
@@ -139,37 +169,18 @@ runs:
           VERSION_IDS=()
 
           # Parse versions and classify them
-          while IFS='|' read -r VERSION_ID TAGS CREATED_AT; do
+          while IFS='|' read -r VERSION_ID TAG IS_PRERELEASE CREATED_AT; do
             if [[ -z "$VERSION_ID" ]]; then
               continue
             fi
 
             ((TOTAL_VERSIONS++))
 
-            # Check if any tag is a semver
-            IS_STABLE=false
-            IS_PRERELEASE=false
-            DISPLAY_TAG=""
-
-            IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
-            for TAG in "${TAG_ARRAY[@]}"; do
-              # Stable release: vX.Y.Z (no suffix)
-              # Stable release: vX.Y.Z (no suffix) or X.Y.Z
-              if [[ "$TAG" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-                IS_STABLE=true
-                DISPLAY_TAG="$TAG"
-                break
-              # Pre-release: vX.Y.Z-{anything} or X.Y.Z-{anything}
-              elif [[ "$TAG" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)- ]]; then
-                IS_PRERELEASE=true
-                DISPLAY_TAG="$TAG"
-              fi
-            done
-
-            if [[ "$IS_STABLE" == "true" ]]; then
-              STABLE_VERSIONS+=("$VERSION_ID|$DISPLAY_TAG|$CREATED_AT")
-            elif [[ "$IS_PRERELEASE" == "true" ]]; then
-              PRERELEASE_VERSIONS+=("$VERSION_ID|$DISPLAY_TAG|$CREATED_AT")
+            # Use preRelease flag from API instead of parsing tags
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              PRERELEASE_VERSIONS+=("$VERSION_ID|$TAG|$CREATED_AT")
+            else
+              STABLE_VERSIONS+=("$VERSION_ID|$TAG|$CREATED_AT")
             fi
           done <<< "$VERSION_DATA"
 
@@ -253,19 +264,16 @@ runs:
               for VERSION_INFO in "${VERSIONS_TO_DELETE[@]}"; do
                 IFS='|' read -r VERSION_ID VTAG VDATE <<< "$VERSION_INFO"
                 
-                DELETE_URL="$API_URL/container/$PACKAGE_NAME/versions/$VERSION_ID"
-                
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-                  -X DELETE \
-                  -H "Authorization: Bearer $GITHUB_TOKEN" \
-                  -H "Accept: application/vnd.github+json" \
-                  "$DELETE_URL")
-                
-                if [[ "$HTTP_CODE" == "204" ]] || [[ "$HTTP_CODE" == "200" ]]; then
+                # Delete using gh CLI
+                if gh api graphql -f query='mutation($org:String!, $name:String!, $id:String!) {
+                  deletePackageVersion(input: {packageVersionId: $id}) {
+                    success
+                  }
+                }' -f org="$ORG" -f name="$PACKAGE_NAME" -f id="$VERSION_ID" &>/dev/null; then
                   echo "   ✓ Deleted: $VTAG (ID: $VERSION_ID)"
                   ((TOTAL_DELETED++))
                 else
-                  echo "   ⚠️  Failed to delete: $VTAG (HTTP $HTTP_CODE)"
+                  echo "   ⚠️  Failed to delete: $VTAG (ID: $VERSION_ID)"
                 fi
                 
                 # Small delay to avoid rate limiting
