@@ -29,15 +29,15 @@ jobs:
       - name: Prune Pre-Release Tags
         uses: hydn-co/build-tools/.github/actions/prune-tags@main
         with:
-          keep-count: 10
-          dry-run: false
-          push: true
+          keep-count: "10"
+          dry-run: "false"
+          push: "true"
 
       - name: Prune Pre-Release Container Packages
         uses: hydn-co/build-tools/.github/actions/prune-packages@main
         with:
           org: hydn-co
           package-prefix: mesh-
-          keep-count: 10
-          dry-run: false
+          keep-count: "10"
+          dry-run: "false"
           token: ${{ secrets.GITHUB_TOKEN }}
