@@ -74,7 +74,7 @@ runs:
 
         # Fetch all container packages
         PACKAGES=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
+          -H "Accept: application/vnd.github+json" \
           "$API_URL?package_type=container&per_page=100")
 
         if [[ "$PACKAGES" == *"Bad credentials"* ]] || [[ "$PACKAGES" == *"\"message\":"* ]]; then
@@ -119,7 +119,7 @@ runs:
           # Fetch all versions for this package
           VERSIONS_URL="$API_URL/container/$PACKAGE_NAME/versions?per_page=100"
           VERSIONS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
+            -H "Accept: application/vnd.github+json" \
             "$VERSIONS_URL")
 
           # Extract version information (id, tags, created_at)
@@ -258,7 +258,7 @@ runs:
                 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
                   -X DELETE \
                   -H "Authorization: Bearer $GITHUB_TOKEN" \
-                  -H "Accept: application/vnd.github.v3+json" \
+                  -H "Accept: application/vnd.github+json" \
                   "$DELETE_URL")
                 
                 if [[ "$HTTP_CODE" == "204" ]] || [[ "$HTTP_CODE" == "200" ]]; then
