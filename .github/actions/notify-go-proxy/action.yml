@@ -1,0 +1,22 @@
+name: "Notify Go Proxy"
+description: "Pings proxy.golang.org so the Go module proxy fetches the tagged version. Safe to run multiple times."
+
+inputs:
+  module:
+    description: "Go module path (e.g. github.com/hydn-co/secrets)"
+    required: true
+  version:
+    description: "Version or tag (e.g. v1.0.0 or 1.0.0-alpha.1)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Notify Go Proxy
+      shell: bash
+      env:
+        MODULE: ${{ inputs.module }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        echo "Triggering Go proxy for ${MODULE}@${VERSION}"
+        curl -sf "https://proxy.golang.org/${MODULE}/@v/${VERSION}.info" -o /dev/null || true

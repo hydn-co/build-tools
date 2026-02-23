@@ -1,0 +1,8 @@
+name: "Workflow Cleanup"
+description: "Deletes old workflow runs to reduce storage and keep the Actions list manageable. Runs in the calling repo context."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Workflow Cleanup
+      uses: fgrzl/actions/workflow-cleanup@v0.0.6
