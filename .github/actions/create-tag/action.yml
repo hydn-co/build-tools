@@ -38,6 +38,10 @@ runs:
       run: |
         set -euo pipefail
 
+        # Ensure Git identity is set (required for annotated tags on runners without default config)
+        git config user.name "hydn-co"
+        git config user.email "hydn-co@hydden.com"
+
         # Validate inputs
         echo "🔍 Validating inputs..."
         # Accept semver with optional leading 'v' and optional prerelease/build metadata
