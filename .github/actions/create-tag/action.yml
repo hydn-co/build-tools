@@ -3,7 +3,7 @@ description: "Creates an annotated Git tag for a release. Idempotent - safe to r
 
 inputs:
   semver:
-    description: "Semantic version tag to create (e.g., v1.2.3 or 1.2.3-alpha.1). Leading 'v' is optional."
+    description: "Semantic version tag to create (e.g., v0.1.0 or 0.1.0). Normalized to always use leading 'v' (e.g. v0.1.0)."
     required: true
   message:
     description: "Tag annotation message (defaults to 'Release {semver}')"
@@ -53,6 +53,12 @@ runs:
         if [[ ! "$PUSH" =~ ^(true|false)$ ]]; then
           echo "❌ ERROR: Invalid push value '$PUSH'. Must be 'true' or 'false'."
           exit 1
+        fi
+
+        # Normalize tag to always have leading 'v' (e.g. v0.1.0)
+        if [[ "$SEMVER" != v* ]]; then
+          SEMVER="v$SEMVER"
+          echo "📌 Normalized tag to $SEMVER"
         fi
 
         # Determine tag message
