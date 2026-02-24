@@ -106,7 +106,6 @@ runs:
       if: steps.prepare.outputs.branch_tag != '' && (steps.prepare.outputs.semver_exists == 'true' || steps.build.outcome == 'success')
       shell: bash
       continue-on-error: true
-      timeout-minutes: 2
       env:
         IMAGE_REF: ${{ steps.prepare.outputs.image_ref }}
         IMAGE: ${{ steps.prepare.outputs.image }}
