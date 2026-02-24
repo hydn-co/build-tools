@@ -18,12 +18,16 @@ inputs:
     description: "Prefix for image name. Use empty string for no prefix."
     required: false
     default: "mesh-"
+  architectures:
+    description: "Comma-separated target architectures"
+    required: false
+    default: "amd64,arm64"
   branch:
     description: "Branch tag. Empty = GITHUB_REF_NAME, '-' = skip."
     required: false
     default: ""
   wait-for-images:
-    description: "Maximum seconds to wait for arch images (0 = no wait)"
+    description: "Maximum seconds to wait for arch images (0 = check once without retrying)"
     required: false
     default: "300"
 
@@ -44,12 +48,27 @@ runs:
       env:
         IMAGE: ${{ format('{0}/{1}/{2}{3}', inputs.registry, inputs.org, inputs.image-prefix, inputs.app) }}
         SEMVER: ${{ inputs.semver }}
+        ARCHITECTURES: ${{ inputs.architectures }}
         BRANCH_INPUT: ${{ inputs.branch }}
         WAIT: ${{ inputs.wait-for-images }}
       run: |
-        B="${BRANCH_INPUT:-$GITHUB_REF_NAME}"; [[ "$BRANCH_INPUT" == "-" || -z "$B" ]] && BT="" || { B="${B//\//-}"; B="${B//[^a-zA-Z0-9_.-]/-}"; BT="${B:0:128}"; }
+        set -euo pipefail
+        [[ "$SEMVER" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]] \
+          || { echo "::error::Invalid semver: $SEMVER"; exit 1; }
+
+        IFS=',' read -ra ARCHES <<< "$ARCHITECTURES"
+        [[ ${#ARCHES[@]} -ge 2 ]] || { echo "::error::At least 2 architectures required, got: $ARCHITECTURES"; exit 1; }
+
+        B="${BRANCH_INPUT:-$GITHUB_REF_NAME}"
+        if [[ "$BRANCH_INPUT" == "-" || -z "$B" ]]; then
+          BT=""
+        else
+          BT="${B//\//-}"; BT="${BT//[^a-zA-Z0-9_.-]/-}"; BT="${BT:0:128}"
+        fi
+
         echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
         echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+        echo "architectures=$ARCHITECTURES" >> "$GITHUB_OUTPUT"
         echo "branch_tag=$BT" >> "$GITHUB_OUTPUT"
         echo "wait=$WAIT" >> "$GITHUB_OUTPUT"
 
@@ -58,15 +77,24 @@ runs:
       env:
         IMAGE: ${{ steps.prepare.outputs.image }}
         SEMVER: ${{ steps.prepare.outputs.semver }}
+        ARCHITECTURES: ${{ steps.prepare.outputs.architectures }}
         WAIT: ${{ steps.prepare.outputs.wait }}
       run: |
+        set -euo pipefail
+        IFS=',' read -ra ARCHES <<< "$ARCHITECTURES"
         DEADLINE=$(( $(date +%s) + WAIT ))
         while true; do
           MISSING=()
-          for arch in amd64 arm64; do docker buildx imagetools inspect "$IMAGE:$SEMVER-$arch" &>/dev/null || MISSING+=("$arch"); done
+          for arch in "${ARCHES[@]}"; do
+            docker buildx imagetools inspect "$IMAGE:$SEMVER-$arch" &>/dev/null || MISSING+=("$arch")
+          done
           [[ ${#MISSING[@]} -eq 0 ]] && break
-          [[ $(date +%s) -ge $DEADLINE ]] && { echo "ERROR: Missing ${MISSING[*]}"; exit 1; }
-          echo "Waiting for ${MISSING[*]}..."; sleep 5
+          if [[ $(date +%s) -ge $DEADLINE ]]; then
+            echo "::error::Timed out waiting for arch images: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "Waiting for ${MISSING[*]}..."
+          sleep 5
         done
 
     - name: Create manifest
@@ -74,25 +102,39 @@ runs:
       env:
         IMAGE: ${{ steps.prepare.outputs.image }}
         SEMVER: ${{ steps.prepare.outputs.semver }}
-      run: docker buildx imagetools create --tag "$IMAGE:$SEMVER" "$IMAGE:$SEMVER-amd64" "$IMAGE:$SEMVER-arm64"
+        ARCHITECTURES: ${{ steps.prepare.outputs.architectures }}
+      run: |
+        set -euo pipefail
+        IFS=',' read -ra ARCHES <<< "$ARCHITECTURES"
+        SOURCES=()
+        for arch in "${ARCHES[@]}"; do SOURCES+=("$IMAGE:$SEMVER-$arch"); done
+        docker buildx imagetools create --tag "$IMAGE:$SEMVER" "${SOURCES[@]}"
 
     - name: Push branch tag
       if: steps.prepare.outputs.branch_tag != ''
       shell: bash
+      continue-on-error: true
       env:
         IMAGE: ${{ steps.prepare.outputs.image }}
         SEMVER: ${{ steps.prepare.outputs.semver }}
         BRANCH_TAG: ${{ steps.prepare.outputs.branch_tag }}
-      run: docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" "$IMAGE:$SEMVER"
+      run: |
+        set -euo pipefail
+        docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" "$IMAGE:$SEMVER" \
+          || echo "::warning::Failed to update branch tag $BRANCH_TAG"
 
     - name: Set outputs
       id: outputs
+      if: always() && steps.prepare.outcome == 'success'
       shell: bash
       env:
         IMAGE: ${{ steps.prepare.outputs.image }}
         SEMVER: ${{ steps.prepare.outputs.semver }}
         BRANCH_TAG: ${{ steps.prepare.outputs.branch_tag }}
       run: |
+        set -euo pipefail
         echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
-        echo "manifest_branch=$([ -n "$BRANCH_TAG" ] && echo "$IMAGE:$BRANCH_TAG" || echo "")" >> "$GITHUB_OUTPUT"
-        echo "digest=$(docker manifest inspect "$IMAGE:$SEMVER" | jq -r '.manifests[0].digest // .config.digest // empty')" >> "$GITHUB_OUTPUT"
+        echo "manifest_branch=${BRANCH_TAG:+$IMAGE:$BRANCH_TAG}" >> "$GITHUB_OUTPUT"
+        DIGEST="sha256:$(docker buildx imagetools inspect --raw "$IMAGE:$SEMVER" 2>/dev/null | sha256sum | awk '{print $1}')" || DIGEST=""
+        [[ "$DIGEST" == "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]] && DIGEST=""
+        echo "digest=${DIGEST:-}" >> "$GITHUB_OUTPUT"
