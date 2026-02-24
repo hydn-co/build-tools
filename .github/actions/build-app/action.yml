@@ -115,7 +115,7 @@ runs:
         [ -z "$REF" ] && REF=$(docker manifest inspect "$IMAGE_REF" 2>/dev/null | jq -r '.manifests[0].digest // .config.digest // empty')
         [ -z "$REF" ] && exit 0
         CUR=$(docker manifest inspect "$IMAGE:$BRANCH_TAG" 2>/dev/null | jq -r '.manifests[0].digest // .config.digest // empty' || echo "")
-        [ "$CUR" != "$REF" ] && docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" "$IMAGE_REF" --push
+        [ "$CUR" != "$REF" ] && docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" "$IMAGE_REF"
 
     - name: Set outputs
       id: outputs

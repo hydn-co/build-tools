@@ -74,7 +74,7 @@ runs:
       env:
         IMAGE: ${{ steps.prepare.outputs.image }}
         SEMVER: ${{ steps.prepare.outputs.semver }}
-      run: docker buildx imagetools create --tag "$IMAGE:$SEMVER" --push "$IMAGE:$SEMVER-amd64" "$IMAGE:$SEMVER-arm64"
+      run: docker buildx imagetools create --tag "$IMAGE:$SEMVER" "$IMAGE:$SEMVER-amd64" "$IMAGE:$SEMVER-arm64"
 
     - name: Push branch tag
       if: steps.prepare.outputs.branch_tag != ''
@@ -83,7 +83,7 @@ runs:
         IMAGE: ${{ steps.prepare.outputs.image }}
         SEMVER: ${{ steps.prepare.outputs.semver }}
         BRANCH_TAG: ${{ steps.prepare.outputs.branch_tag }}
-      run: docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" --push "$IMAGE:$SEMVER"
+      run: docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" "$IMAGE:$SEMVER"
 
     - name: Set outputs
       id: outputs
