@@ -1,4 +1,4 @@
-﻿name: "Build Multi-Arch Manifest"
+name: "Build Multi-Arch Manifest"
 description: "Creates a multi-architecture image manifest from per-arch images"
 
 inputs:
@@ -18,6 +18,10 @@ inputs:
     description: "Prefix for image name (e.g., mesh-, liteiga-). Use empty string for no prefix."
     required: false
     default: "mesh-"
+  branch:
+    description: "Branch name for additional tag (e.g. main, feature/foo). Empty = use GITHUB_REF_NAME; set to '-' to skip branch tag."
+    required: false
+    default: ""
   wait-for-images:
     description: "Maximum seconds to wait for arch images to become available (0 = no wait)"
     required: false
@@ -27,6 +31,9 @@ outputs:
   manifest:
     description: "Full image reference for the created manifest (registry/org/prefix-app:tag)"
     value: ${{ steps.manifest.outputs.manifest }}
+  manifest-branch:
+    description: "Image reference with branch tag when branch tagging is used (registry/org/prefix-app:branch)"
+    value: ${{ steps.manifest.outputs.manifest_branch }}
   digest:
     description: "Manifest digest (sha256:...)"
     value: ${{ steps.manifest.outputs.digest }}
@@ -46,10 +53,24 @@ runs:
         ORG: ${{ inputs.org }}
         APP: ${{ inputs.app }}
         IMAGE_PREFIX: ${{ inputs.image-prefix }}
+        BRANCH_INPUT: ${{ inputs.branch }}
+        WAIT_FOR_IMAGES: ${{ inputs.wait-for-images }}
       run: |
         set -euo pipefail
 
         IMAGE="$REGISTRY/$ORG/${IMAGE_PREFIX}${APP}"
+
+        # Branch tag: optional tag (branch only, no -arch; manifest is multi-arch)
+        BRANCH_TAG=""
+        if [[ "$BRANCH_INPUT" != "-" ]]; then
+          BRANCH="${BRANCH_INPUT:-$GITHUB_REF_NAME}"
+          if [[ -n "$BRANCH" ]]; then
+            BRANCH_SANITIZED="${BRANCH//\//-}"
+            BRANCH_SANITIZED="${BRANCH_SANITIZED//[^a-zA-Z0-9_.-]/-}"
+            BRANCH_SANITIZED="${BRANCH_SANITIZED:0:128}"
+            [[ -n "$BRANCH_SANITIZED" ]] && BRANCH_TAG="$BRANCH_SANITIZED"
+          fi
+        fi
 
         echo "Validating inputs..."
         # Accept semver with optional leading 'v' and optional prerelease/build metadata
@@ -60,13 +81,29 @@ runs:
 
         echo "Checking multi-arch manifest for $IMAGE:$SEMVER"
 
-        if docker manifest inspect "$IMAGE:$SEMVER" >/dev/null 2>&1; then
+        MANIFEST_JSON=$(docker manifest inspect "$IMAGE:$SEMVER" 2>/dev/null) || true
+        if [[ -n "$MANIFEST_JSON" ]]; then
           echo "Manifest already exists: $IMAGE:$SEMVER"
-          
-            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
-            ARCHES=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.manifests[].platform.architecture' 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-          
+
+          DIGEST=$(echo "$MANIFEST_JSON" | jq -r '.config.digest // .manifests[0].digest // empty' 2>/dev/null || echo "")
+          ARCHES=$(echo "$MANIFEST_JSON" | jq -r '.manifests[].platform.architecture' 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+          REF_DIGEST="$DIGEST"
+
+          if [[ -n "$BRANCH_TAG" ]]; then
+            BRANCH_REF="$IMAGE:$BRANCH_TAG"
+            BRANCH_JSON=$(docker manifest inspect "$BRANCH_REF" 2>/dev/null) || true
+            CURRENT_DIGEST=""
+            [[ -n "$BRANCH_JSON" ]] && CURRENT_DIGEST=$(echo "$BRANCH_JSON" | jq -r '.manifests[0].digest // .config.digest // empty' 2>/dev/null || echo "")
+            if [[ -z "$CURRENT_DIGEST" || "$CURRENT_DIGEST" != "$REF_DIGEST" ]]; then
+              echo "Tagging manifest as $BRANCH_REF"
+              docker buildx imagetools create --tag "$BRANCH_REF" "$IMAGE:$SEMVER" --push
+            else
+              echo "Branch tag $BRANCH_REF already up to date, skipping push"
+            fi
+          fi
+
           echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "manifest_branch=$([ -n "$BRANCH_TAG" ] && echo "$IMAGE:$BRANCH_TAG" || echo "")" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "architectures=$ARCHES" >> "$GITHUB_OUTPUT"
           exit 0
@@ -74,13 +111,26 @@ runs:
 
         echo "Verifying architecture-specific images exist..."
         missing_arches=()
-        for arch in amd64 arm64; do
-          if docker buildx imagetools inspect "$IMAGE:$SEMVER-$arch" >/dev/null 2>&1; then
-            echo "Found $IMAGE:$SEMVER-$arch"
-          else
-            echo "Missing $IMAGE:$SEMVER-$arch"
-            missing_arches+=("$arch")
+        wait_sec="${WAIT_FOR_IMAGES:-0}"
+        wait_end=$(($(date +%s) + wait_sec))
+        while true; do
+          missing_arches=()
+          for arch in amd64 arm64; do
+            if docker buildx imagetools inspect "$IMAGE:$SEMVER-$arch" >/dev/null 2>&1; then
+              echo "Found $IMAGE:$SEMVER-$arch"
+            else
+              missing_arches+=("$arch")
+            fi
+          done
+          if [ ${#missing_arches[@]} -eq 0 ]; then
+            break
           fi
+          if [[ "$wait_sec" == "0" ]] || [[ $(date +%s) -ge "$wait_end" ]]; then
+            echo "Missing arch images: ${missing_arches[*]}"
+            break
+          fi
+          echo "Waiting for ${missing_arches[*]}... (timeout in $(( wait_end - $(date +%s) ))s)"
+          sleep 5
         done
 
         if [ ${#missing_arches[@]} -eq 0 ]; then
@@ -99,11 +149,18 @@ runs:
           fi
 
           echo "Manifest created: $IMAGE:$SEMVER"
-          
-            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SEMVER" --format '{{json .Manifest}}' | jq -r '.digest // empty' 2>/dev/null || echo "")
+
+          if [[ -n "$BRANCH_TAG" ]]; then
+            echo "Tagging manifest as $IMAGE:$BRANCH_TAG"
+            docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" "$IMAGE:$SEMVER" --push
+          fi
+
+          MANIFEST_JSON=$(docker manifest inspect "$IMAGE:$SEMVER" 2>/dev/null)
+          DIGEST=$(echo "$MANIFEST_JSON" | jq -r '.manifests[0].digest // .config.digest // empty' 2>/dev/null || echo "")
           ARCHES="amd64,arm64"
-          
+
           echo "manifest=$IMAGE:$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "manifest_branch=$([ -n "$BRANCH_TAG" ] && echo "$IMAGE:$BRANCH_TAG" || echo "")" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "architectures=$ARCHES" >> "$GITHUB_OUTPUT"
         else
