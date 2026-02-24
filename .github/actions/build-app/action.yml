@@ -171,6 +171,13 @@ runs:
           echo " Exporting build cache to: $CACHE_TO"
           BUILD_ARGS+=("--cache-to" "$CACHE_TO")
 
+          # Use a builder that supports registry cache (default docker driver does not)
+          echo " Setting up buildx builder for registry cache..."
+          if ! docker buildx use buildx-registry-cache 2>/dev/null; then
+            docker buildx create --use --name buildx-registry-cache --driver docker-container
+          fi
+          docker buildx inspect --bootstrap
+
           # Build with retry logic (3 attempts)
           MAX_ATTEMPTS=3
           ATTEMPT=1
