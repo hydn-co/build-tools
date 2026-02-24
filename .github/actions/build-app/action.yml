@@ -92,10 +92,17 @@ runs:
         SEMVER: ${{ inputs.semver }}
       run: |
         set -e
-        [ -n "$BRANCH_TAG" ] && docker pull "$IMAGE:$BRANCH_TAG" 2>/dev/null || true
+        CACHE_FROM=""
+        CACHE_TO=""
+        if [ -n "$BRANCH_TAG" ]; then
+          if docker buildx imagetools inspect "$IMAGE:$BRANCH_TAG" &>/dev/null; then
+            CACHE_FROM="type=registry,ref=$IMAGE:$BRANCH_TAG"
+          fi
+          CACHE_TO="type=registry,ref=$IMAGE:$BRANCH_TAG,mode=max"
+        fi
         docker buildx build -f "$DOCKERFILE" --build-arg "SEMVER=$SEMVER" \
-          $([ -n "$BRANCH_TAG" ] && echo "--cache-from type=registry,ref=$IMAGE:$BRANCH_TAG") \
-          $([ -n "$BRANCH_TAG" ] && echo "--cache-to type=registry,ref=$IMAGE:$BRANCH_TAG,mode=max") \
+          $([ -n "$CACHE_FROM" ] && echo "--cache-from $CACHE_FROM") \
+          $([ -n "$CACHE_TO" ] && echo "--cache-to $CACHE_TO") \
           --tag "$IMAGE_REF" $([ -n "$BRANCH_TAG" ] && echo "--tag $IMAGE:$BRANCH_TAG") --push "$BUILD_CONTEXT" 2>&1 | tee /tmp/build.log
         [ ${PIPESTATUS[0]} -eq 0 ]
         DIGEST=$(grep "naming to" /tmp/build.log 2>/dev/null | tail -1 | grep -oE 'sha256:[a-f0-9]{64}' | tail -1)
