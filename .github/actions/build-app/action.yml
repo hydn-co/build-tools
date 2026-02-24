@@ -59,13 +59,14 @@ runs:
         DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
         BUILD_CONTEXT: ${{ inputs.build-context }}
       run: |
+        set -euo pipefail
         [[ "${{ inputs.arch }}" =~ ^(amd64|arm64)$ ]] || { echo "ERROR: Invalid arch"; exit 1; }
         [[ "${{ inputs.semver }}" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]] || { echo "ERROR: Invalid semver"; exit 1; }
         test -f "${DOCKERFILE_PATH//\{app\}/$APP}" || { echo "ERROR: Dockerfile not found"; exit 1; }
         B="${BRANCH_INPUT:-$GITHUB_REF_NAME}"; [[ "$BRANCH_INPUT" == "-" || -z "$B" ]] && BT="" || { BT="${B//\//-}"; BT="${BT//[^a-zA-Z0-9_.-]/-}"; BT="${BT:0:128}-$ARCH"; }
         docker buildx use buildx-registry-cache 2>/dev/null || docker buildx create --use --name buildx-registry-cache --driver docker-container
         docker buildx inspect --bootstrap
-        MANIFEST=$(docker manifest inspect "$IMAGE_REF" 2>/dev/null) || true
+        MANIFEST=$(docker manifest inspect "$IMAGE_REF" 2>/dev/null) || MANIFEST=""
         if [ -n "$MANIFEST" ]; then
           echo "semver_exists=true" >> "$GITHUB_OUTPUT"
           echo "image_digest=$(echo "$MANIFEST" | jq -r '.manifests[0].digest // .config.digest // empty')" >> "$GITHUB_OUTPUT"
@@ -91,10 +92,10 @@ runs:
         BUILD_CONTEXT: ${{ steps.prepare.outputs.build_context }}
         SEMVER: ${{ inputs.semver }}
       run: |
-        set -e
+        set -euo pipefail
         CACHE_FROM=""
         CACHE_TO=""
-        if [ -n "$BRANCH_TAG" ]; then
+        if [ -n "${BRANCH_TAG:-}" ]; then
           if docker buildx imagetools inspect "$IMAGE:$BRANCH_TAG" &>/dev/null; then
             CACHE_FROM="type=registry,ref=$IMAGE:$BRANCH_TAG"
           fi
@@ -103,11 +104,11 @@ runs:
         docker buildx build -f "$DOCKERFILE" --build-arg "SEMVER=$SEMVER" \
           $([ -n "$CACHE_FROM" ] && echo "--cache-from $CACHE_FROM") \
           $([ -n "$CACHE_TO" ] && echo "--cache-to $CACHE_TO") \
-          --tag "$IMAGE_REF" $([ -n "$BRANCH_TAG" ] && echo "--tag $IMAGE:$BRANCH_TAG") --push "$BUILD_CONTEXT" 2>&1 | tee /tmp/build.log
-        [ ${PIPESTATUS[0]} -eq 0 ]
-        DIGEST=$(grep "naming to" /tmp/build.log 2>/dev/null | tail -1 | grep -oE 'sha256:[a-f0-9]{64}' | tail -1)
-        [ -z "$DIGEST" ] && DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/build.log | tail -1)
-        echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          --tag "$IMAGE_REF" $([ -n "${BRANCH_TAG:-}" ] && echo "--tag $IMAGE:$BRANCH_TAG") --push "$BUILD_CONTEXT" 2>&1 | tee /tmp/build.log
+        [ ${PIPESTATUS[0]} -eq 0 ] || { echo "ERROR: docker buildx build failed"; cat /tmp/build.log; exit 1; }
+        DIGEST=$(grep "naming to" /tmp/build.log 2>/dev/null | tail -1 | grep -oE 'sha256:[a-f0-9]{64}' | tail -1) || true
+        [ -z "${DIGEST:-}" ] && DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/build.log | tail -1) || true
+        echo "digest=${DIGEST:-}" >> "$GITHUB_OUTPUT"
 
     - name: Push branch tag
       if: steps.prepare.outputs.branch_tag != '' && (steps.prepare.outputs.semver_exists == 'true' || steps.build.outcome == 'success')
@@ -119,7 +120,8 @@ runs:
         BRANCH_TAG: ${{ steps.prepare.outputs.branch_tag }}
         REF: ${{ steps.prepare.outputs.semver_exists == 'true' && steps.prepare.outputs.image_digest || steps.build.outputs.digest }}
       run: |
-        [ -z "$REF" ] && REF=$(docker manifest inspect "$IMAGE_REF" 2>/dev/null | jq -r '.manifests[0].digest // .config.digest // empty')
+        set -euo pipefail
+        REF="${REF:-$(docker manifest inspect "$IMAGE_REF" 2>/dev/null | jq -r '.manifests[0].digest // .config.digest // empty' || echo '')}"
         [ -z "$REF" ] && exit 0
         CUR=$(docker manifest inspect "$IMAGE:$BRANCH_TAG" 2>/dev/null | jq -r '.manifests[0].digest // .config.digest // empty' || echo "")
         [ "$CUR" != "$REF" ] && docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" "$IMAGE_REF"
@@ -135,9 +137,14 @@ runs:
         SEMVER_EXISTS: ${{ steps.prepare.outputs.semver_exists }}
         DIGEST: ${{ steps.prepare.outputs.semver_exists == 'true' && steps.prepare.outputs.image_digest || steps.build.outputs.digest }}
       run: |
+        set -euo pipefail
+        if [[ -z "${IMAGE_REF:-}" ]]; then
+          echo "ERROR: IMAGE_REF not set"
+          exit 1
+        fi
         echo "image=$IMAGE_REF" >> "$GITHUB_OUTPUT"
-        echo "image_branch=$([ -n "$BRANCH_TAG" ] && echo "$IMAGE:$BRANCH_TAG" || echo "")" >> "$GITHUB_OUTPUT"
-        if [ -n "$DIGEST" ]; then
+        echo "image_branch=$([ -n "${BRANCH_TAG:-}" ] && echo "$IMAGE:$BRANCH_TAG" || echo "")" >> "$GITHUB_OUTPUT"
+        if [ -n "${DIGEST:-}" ]; then
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
         else
           echo "digest=$(docker manifest inspect "$IMAGE_REF" 2>/dev/null | jq -r '.manifests[0].digest // .config.digest // empty' || echo "")" >> "$GITHUB_OUTPUT"
