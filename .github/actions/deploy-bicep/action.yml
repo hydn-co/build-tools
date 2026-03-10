@@ -182,3 +182,15 @@ runs:
         fi
 
         echo "✅ Deployment completed successfully"
+
+        # Start Container App if template outputs containerAppName (convention)
+        echo ""
+        RG="rg-$ENVIRONMENT"
+        APP_NAME=$(az deployment sub show --name "$NAME" --query "properties.outputs.containerAppName.value" -o tsv 2>/dev/null || true)
+        if [[ -n "$APP_NAME" ]]; then
+          echo "▶️  Starting Container App: $APP_NAME"
+          az rest --method post \
+            --url "https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.App/containerApps/$APP_NAME/start?api-version=2025-01-01" \
+            --only-show-errors
+          echo "   Start requested."
+        fi
