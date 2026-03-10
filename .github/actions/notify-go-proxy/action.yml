@@ -1,22 +1,19 @@
-name: "Notify Go Proxy"
-description: "Pings proxy.golang.org so the Go module proxy fetches the tagged version. Safe to run multiple times."
+name: Notify Go Proxy
+description: Ping Go proxy to cache module version
+author: "smiggleworth"
+
+branding:
+  icon: send
+  color: blue
 
 inputs:
-  module:
-    description: "Go module path (e.g. github.com/hydn-co/secrets)"
+  tag:
     required: true
-  version:
-    description: "Version or tag (e.g. v1.0.0 or 1.0.0-alpha.1)"
-    required: true
+    description: Semver tag (without "v" prefix)
 
 runs:
   using: "composite"
   steps:
-    - name: Notify Go Proxy
+    - run: |
+        curl -sSf "https://proxy.golang.org/github.com/${{ github.repository }}/@v/v${{ inputs.tag }}.info"
       shell: bash
-      env:
-        MODULE: ${{ inputs.module }}
-        VERSION: ${{ inputs.version }}
-      run: |
-        echo "Triggering Go proxy for ${MODULE}@${VERSION}"
-        curl -sf "https://proxy.golang.org/${MODULE}/@v/${VERSION}.info" -o /dev/null || true
