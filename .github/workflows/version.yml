@@ -15,6 +15,12 @@ on:
       sha:
         description: "The commit SHA"
         value: ${{ jobs.version.outputs.sha }}
+      fullSemVer:
+        description: "Full semantic version including pre-release and metadata"
+        value: ${{ jobs.version.outputs.fullSemVer }}
+      informationalVersion:
+        description: "Informational version string"
+        value: ${{ jobs.version.outputs.informationalVersion }}
   workflow_dispatch:
 
 permissions:
@@ -27,22 +33,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.version.outputs.SemVer }}
-      semVer: ${{ steps.version.outputs.SemVer }}
-      majorMinorPatch: ${{ steps.version.outputs.MajorMinorPatch }}
-      sha: ${{ steps.version.outputs.Sha }}
-      fullSemVer: ${{ steps.version.outputs.FullSemVer }}
-      informationalVersion: ${{ steps.version.outputs.InformationalVersion }}
+      version: ${{ steps.version.outputs.semVer }}
+      semVer: ${{ steps.version.outputs.semVer }}
+      majorMinorPatch: ${{ steps.version.outputs.majorMinorPatch }}
+      sha: ${{ steps.version.outputs.sha }}
+      fullSemVer: ${{ steps.version.outputs.fullSemVer }}
+      informationalVersion: ${{ steps.version.outputs.informationalVersion }}
 
     steps:
       - name: Checkout Full History
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4.1.0
+        uses: gittools/actions/gitversion/setup@v4.4.2
+        with:
+          versionSpec: "6.7.x"
 
       - name: Calculate Version
         id: version
-        uses: gittools/actions/gitversion/execute@v4.1.0
+        uses: gittools/actions/gitversion/execute@v4.4.2
