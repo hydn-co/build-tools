@@ -334,8 +334,8 @@ Use this checklist when setting up new services:
   ```
 
 - [ ] **Environment protection rules**
-  - [ ] Required reviewers for production
-  - [ ] Wait timer for production (optional)
+  - [ ] Required reviewers for the `prod` environment
+  - [ ] Wait timer for `prod` (optional)
   - [ ] Restrict to protected branches
 
 ### Action Usage

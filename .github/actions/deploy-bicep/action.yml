@@ -3,7 +3,7 @@ description: "Deploys Azure Bicep template using subscription-scoped deployment"
 
 inputs:
   environment:
-    description: "Target environment name (e.g., dev1, prod1)"
+    description: "Target environment name (e.g., dev1, prod)"
     required: true
   name:
     description: "Deployment name (will be suffixed with environment)"
