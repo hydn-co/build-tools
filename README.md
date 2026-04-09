@@ -180,6 +180,42 @@ Removes old pre-release container images from GHCR, keeping only the latest N. N
 - **Stable:** `v1.2.3` tag - **NEVER DELETED**
 - **Pre-release:** `v1.2.3-alpha.1`, `v1.2.3-dev.20241030` - kept only latest N per package
 
+#### `.github/actions/prune-acr-images`
+
+Removes old Azure Container Registry image tags for a single repository, keeping the newest N matching tags.
+
+**Usage:**
+
+```yaml
+- uses: hydn-co/build-tools/.github/actions/prune-acr-images@main
+  with:
+    azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+    azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    azure-subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    acr-name: ${{ vars.AZURE_CONTAINER_REGISTRY }}
+    repository: mesh-streamd
+    keep-count: 10 # Optional, default: 10
+    older-than-days: 30 # Optional, default: 30
+    dry-run: false # Optional, default: false
+```
+
+**Features:**
+
+- ✅ Works with Azure OIDC login from GitHub Actions
+- ✅ Focused on a single ACR repository, ideal for workflow matrix fan-out
+- ✅ Keeps the newest N matching tags in that repository
+- ✅ Optional age threshold to avoid deleting recent images
+- ✅ Defaults to semver-like tags only, so non-release tags are ignored
+- ✅ Dry-run mode to preview deletions
+- ✅ Outputs: deleted-count, repository, tags-matched
+
+**Notes:**
+
+- The calling workflow still needs `permissions: id-token: write`
+- If Azure vars are environment-scoped, the calling job still needs `environment: ...`
+- Designed for immutable, uniquely tagged release images in ACR
+- Uses `az acr repository delete --image`, so tags sharing a digest with protected tags are skipped
+
 ## 🔄 Migration Guide
 
 ### From Local Actions to Centralized
@@ -296,7 +332,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

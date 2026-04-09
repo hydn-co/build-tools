@@ -1,0 +1,275 @@
+name: "Prune ACR Images"
+description: "Removes old Azure Container Registry image tags for a single repository, keeping the newest N matching tags"
+
+inputs:
+  azure-client-id:
+    description: "Azure client ID for OIDC login"
+    required: true
+  azure-tenant-id:
+    description: "Azure tenant ID for OIDC login"
+    required: true
+  azure-subscription-id:
+    description: "Azure subscription ID for OIDC login"
+    required: true
+  acr-name:
+    description: "Azure Container Registry short name (not FQDN)"
+    required: true
+  repository:
+    description: "Repository name to prune"
+    required: true
+  keep-count:
+    description: "Number of newest matching tags to keep per repository"
+    required: false
+    default: "10"
+  older-than-days:
+    description: "Delete only tags older than this many days. Set to 0 to ignore age."
+    required: false
+    default: "30"
+  tag-regex:
+    description: "Regex for tags eligible for pruning"
+    required: false
+    default: "^[v]?[0-9]+\\.[0-9]+\\.[0-9]+([-.][0-9A-Za-z.+-]+)?$"
+  dry-run:
+    description: "Preview what would be deleted without actually deleting (true/false)"
+    required: false
+    default: "false"
+
+outputs:
+  deleted-count:
+    description: "Number of images deleted (or that would be deleted in dry-run)"
+    value: ${{ steps.prune.outputs.deleted-count }}
+  repository:
+    description: "Repository that was processed"
+    value: ${{ steps.prune.outputs.repository }}
+  tags-matched:
+    description: "Number of tags that matched the pruning filter"
+    value: ${{ steps.prune.outputs.tags-matched }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Azure Login With OIDC
+      uses: azure/login@v4
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    - name: Prune ACR images
+      id: prune
+      shell: bash
+      env:
+        ACR_NAME: ${{ inputs.acr-name }}
+        REPOSITORY: ${{ inputs.repository }}
+        KEEP_COUNT: ${{ inputs.keep-count }}
+        OLDER_THAN_DAYS: ${{ inputs.older-than-days }}
+        TAG_REGEX: ${{ inputs.tag-regex }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        set -euo pipefail
+
+        echo "🔍 Validating inputs..."
+
+        if [[ -z "$ACR_NAME" ]]; then
+          echo "❌ ERROR: acr-name is required"
+          exit 1
+        fi
+
+        if [[ ! "$KEEP_COUNT" =~ ^[0-9]+$ ]]; then
+          echo "❌ ERROR: Invalid keep-count '$KEEP_COUNT'. Must be a non-negative integer."
+          exit 1
+        fi
+
+        if [[ ! "$OLDER_THAN_DAYS" =~ ^[0-9]+$ ]]; then
+          echo "❌ ERROR: Invalid older-than-days '$OLDER_THAN_DAYS'. Must be a non-negative integer."
+          exit 1
+        fi
+
+        if [[ ! "$DRY_RUN" =~ ^(true|false)$ ]]; then
+          echo "❌ ERROR: Invalid dry-run value '$DRY_RUN'. Must be 'true' or 'false'."
+          exit 1
+        fi
+
+        if ! command -v az >/dev/null 2>&1; then
+          echo "❌ ERROR: Azure CLI not found on runner"
+          exit 1
+        fi
+
+        if ! command -v jq >/dev/null 2>&1; then
+          echo "❌ ERROR: jq not found on runner"
+          exit 1
+        fi
+
+        if ! az account show >/dev/null 2>&1; then
+          echo "❌ ERROR: Azure CLI is not authenticated"
+          echo "   Run azure/login before this action."
+          exit 1
+        fi
+
+        if [[ -z "$REPOSITORY" ]]; then
+          echo "❌ ERROR: repository is required"
+          exit 1
+        fi
+
+        CUTOFF_EPOCH=0
+        if (( OLDER_THAN_DAYS > 0 )); then
+          CUTOFF_EPOCH=$(date -u -d "$OLDER_THAN_DAYS days ago" +%s)
+          echo "🕒 Deleting only tags older than: $(date -u -d "@$CUTOFF_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")"
+        else
+          echo "🕒 Age filter disabled"
+        fi
+
+        echo "📦 Registry: $ACR_NAME"
+        echo "📦 Repository: $REPOSITORY"
+        echo "🧷 Tag regex: $TAG_REGEX"
+        echo "🛡️  Keeping newest matching tags: $KEEP_COUNT"
+
+        TOTAL_DELETED=0
+        TOTAL_MATCHED=0
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📦 Processing repository: $REPOSITORY"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        if ! TAG_JSON=$(az acr repository show-tags --name "$ACR_NAME" --repository "$REPOSITORY" --detail --orderby time_desc -o json 2>/dev/null); then
+          echo "⚠️  Repository '$REPOSITORY' not found or not readable, skipping"
+          echo "deleted-count=0" >> "$GITHUB_OUTPUT"
+          echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "tags-matched=0" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        MATCHING_LINES=$(echo "$TAG_JSON" | jq -r --arg regex "$TAG_REGEX" '
+          .[]
+          | select(.name | test($regex))
+          | [.name, (.createdTime // .lastUpdateTime // ""), (.digest // "")]
+          | @tsv
+        ')
+
+        if [[ -z "$MATCHING_LINES" ]]; then
+          echo "ℹ️  No tags matched the pruning regex"
+          echo "deleted-count=0" >> "$GITHUB_OUTPUT"
+          echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "tags-matched=0" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        declare -a TAGS_TO_KEEP=()
+        declare -a TAGS_TO_DELETE=()
+        declare -A PROTECTED_DIGESTS=()
+        declare -A SEEN_DELETE_DIGESTS=()
+
+        INDEX=0
+
+        while IFS=$'\t' read -r TAG_NAME CREATED_AT DIGEST; do
+          [[ -z "$TAG_NAME" ]] && continue
+          ((TOTAL_MATCHED+=1))
+
+          ENTRY="${TAG_NAME}|${CREATED_AT}|${DIGEST}"
+          if (( INDEX < KEEP_COUNT )); then
+            TAGS_TO_KEEP+=("$ENTRY")
+            if [[ -n "$DIGEST" ]]; then
+              PROTECTED_DIGESTS["$DIGEST"]=1
+            fi
+            ((INDEX+=1))
+            continue
+          fi
+
+          if (( OLDER_THAN_DAYS > 0 )); then
+            if [[ -z "$CREATED_AT" ]]; then
+              echo "⚠️  Skipping '$TAG_NAME' because it has no timestamp metadata"
+              continue
+            fi
+
+            if ! CREATED_EPOCH=$(date -u -d "$CREATED_AT" +%s 2>/dev/null); then
+              echo "⚠️  Skipping '$TAG_NAME' because timestamp '$CREATED_AT' could not be parsed"
+              continue
+            fi
+
+            if (( CREATED_EPOCH > CUTOFF_EPOCH )); then
+              continue
+            fi
+          fi
+
+          if [[ -n "$DIGEST" && -n "${PROTECTED_DIGESTS[$DIGEST]:-}" ]]; then
+            echo "⚠️  Skipping '$TAG_NAME' because it shares a digest with a protected tag"
+            continue
+          fi
+
+          if [[ -n "$DIGEST" && -n "${SEEN_DELETE_DIGESTS[$DIGEST]:-}" ]]; then
+            echo "⚠️  Skipping '$TAG_NAME' because another deletable tag already targets the same digest"
+            continue
+          fi
+
+          TAGS_TO_DELETE+=("$ENTRY")
+          if [[ -n "$DIGEST" ]]; then
+            SEEN_DELETE_DIGESTS["$DIGEST"]=1
+          fi
+        done <<< "$MATCHING_LINES"
+
+        echo "📊 Matching tags: $TOTAL_MATCHED"
+        echo "✅ Keeping: ${#TAGS_TO_KEEP[@]}"
+        echo "🗑️  Eligible for deletion: ${#TAGS_TO_DELETE[@]}"
+
+        if [[ ${#TAGS_TO_KEEP[@]} -gt 0 ]]; then
+          echo ""
+          echo "Kept tags:"
+          for ENTRY in "${TAGS_TO_KEEP[@]}"; do
+            IFS='|' read -r TAG_NAME CREATED_AT _ <<< "$ENTRY"
+            echo "  - $TAG_NAME (${CREATED_AT:-unknown})"
+          done
+        fi
+
+        if [[ ${#TAGS_TO_DELETE[@]} -eq 0 ]]; then
+          echo "✅ No images to delete"
+          echo "deleted-count=0" >> "$GITHUB_OUTPUT"
+          echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "tags-matched=$TOTAL_MATCHED" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo ""
+        echo "Deletion candidates:"
+        for ENTRY in "${TAGS_TO_DELETE[@]}"; do
+          IFS='|' read -r TAG_NAME CREATED_AT _ <<< "$ENTRY"
+          echo "  - $TAG_NAME (${CREATED_AT:-unknown})"
+        done
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+          echo ""
+          echo "🔍 DRY RUN: No images will be deleted"
+          ((TOTAL_DELETED+=${#TAGS_TO_DELETE[@]}))
+          echo "deleted-count=$TOTAL_DELETED" >> "$GITHUB_OUTPUT"
+          echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "tags-matched=$TOTAL_MATCHED" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo ""
+        echo "🗑️  Deleting images..."
+        for ENTRY in "${TAGS_TO_DELETE[@]}"; do
+          IFS='|' read -r TAG_NAME CREATED_AT _ <<< "$ENTRY"
+          if az acr repository delete --name "$ACR_NAME" --image "$REPOSITORY:$TAG_NAME" --yes >/dev/null; then
+            echo "  ✓ Deleted $REPOSITORY:$TAG_NAME"
+            ((TOTAL_DELETED+=1))
+          else
+            echo "  ⚠️  Failed to delete $REPOSITORY:$TAG_NAME"
+          fi
+        done
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📊 Cleanup Summary"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "   Repository: $REPOSITORY"
+        echo "   Matching tags seen: $TOTAL_MATCHED"
+        echo "   Images deleted: $TOTAL_DELETED"
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+          echo ""
+          echo "🔍 This was a DRY RUN - no images were actually deleted"
+        fi
+
+        echo "deleted-count=$TOTAL_DELETED" >> "$GITHUB_OUTPUT"
+        echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+        echo "tags-matched=$TOTAL_MATCHED" >> "$GITHUB_OUTPUT"
