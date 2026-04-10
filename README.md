@@ -51,6 +51,60 @@ Creates a multi-architecture manifest combining amd64 and arm64 images.
 - ✅ Idempotent (skips if manifest already exists)
 - ✅ Returns manifest reference as output
 
+#### `.github/actions/build-go-binary`
+
+Builds a single collector binary for a given `GOOS` and `GOARCH` and names it using `{binary-prefix}{goos}-{goarch}`.
+
+**Usage:**
+
+```yaml
+- uses: hydn-co/build-tools/.github/actions/build-go-binary@main
+  with:
+    binary-prefix: mesh-azure-
+    goos: linux
+    goarch: amd64
+    build-target: ./cmd
+    cgo-enabled: "0"
+```
+
+## 🔁 Reusable Workflows
+
+### `.github/workflows/collector-version-advancement.yml`
+
+Reusable workflow for the CI-side version advancement check used by collector repositories.
+It assumes the collector contract: `go run ./cmd/... -describe` writes `manifest.json` with a `.version` field.
+
+**Usage:**
+
+```yaml
+jobs:
+  version-advancement:
+    uses: hydn-co/build-tools/.github/workflows/collector-version-advancement.yml@main
+```
+
+### `.github/workflows/collector-release.yml`
+
+Reusable workflow for validating a manifest version, building the standard collector GOOS/GOARCH matrix, generating checksum sidecars, and publishing a GitHub release.
+It assumes the collector contract: `go run ./cmd/... -describe` writes `manifest.json` with a `.version` field, the build target is `./cmd`, and release assets are named from the repository name.
+
+**Usage:**
+
+```yaml
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: hydn-co/build-tools/.github/workflows/collector-release.yml@main
+```
+
+**Features:**
+
+- ✅ Default-branch guard for release dispatches
+- ✅ Manifest-driven semver validation and advancement checks
+- ✅ Standard collector GOOS and GOARCH matrix
+- ✅ Per-file checksum generation before release publication
+- ✅ GitHub release creation with generated notes
+
 ### Deployment Actions
 
 #### `.github/actions/deploy-bicep`
