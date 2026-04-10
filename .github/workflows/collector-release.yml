@@ -169,12 +169,13 @@ jobs:
         shell: bash
         env:
           BINARY_PREFIX: ${{ github.event.repository.name }}-
+          VERSION: ${{ needs.validate.outputs.version }}
           GOOS_VALUE: ${{ matrix.goos }}
           GOARCH_VALUE: ${{ matrix.goarch }}
         run: |
           set -euo pipefail
 
-          FILENAME="${BINARY_PREFIX}${GOOS_VALUE}-${GOARCH_VALUE}"
+          FILENAME="${BINARY_PREFIX}${VERSION}-${GOOS_VALUE}-${GOARCH_VALUE}"
           if [[ "$GOOS_VALUE" == "windows" ]]; then
             FILENAME="${FILENAME}.exe"
           fi
@@ -189,7 +190,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: binary-${{ needs.validate.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ steps.binary.outputs.path }}
 
   publish:
@@ -214,6 +215,8 @@ jobs:
 
       - name: Generate per-file checksums
         shell: bash
+        env:
+          ASSET_PREFIX: ${{ github.event.repository.name }}-${{ needs.validate.outputs.version }}-
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -221,14 +224,14 @@ jobs:
           cd dist
 
           COUNT=0
-          for file in ${{ github.event.repository.name }}-*; do
+          for file in ${ASSET_PREFIX}*; do
             [[ -f "$file" ]] || continue
             sha256sum "$file" > "${file}.sha256"
             COUNT=$((COUNT + 1))
           done
 
           if [[ "$COUNT" -eq 0 ]]; then
-            echo "::error::No release assets matched '${{ github.event.repository.name }}-*' in dist/."
+            echo "::error::No release assets matched '${ASSET_PREFIX}*' in dist/."
             exit 1
           fi
 

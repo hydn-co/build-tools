@@ -69,7 +69,7 @@ jobs:
 ### `.github/workflows/collector-release.yml`
 
 Reusable workflow for validating a manifest version, building the standard collector GOOS/GOARCH matrix, generating checksum sidecars, and publishing a GitHub release.
-It assumes the collector contract: `go run ./cmd/... -describe` writes `manifest.json` with a `.version` field, the build target is `./cmd`, and release assets are named from the repository name.
+It assumes the collector contract: `go run ./cmd/... -describe` writes `manifest.json` with a `.version` field, the build target is `./cmd`, and release assets are named from the repository name plus the manifest version.
 
 **Usage:**
 
