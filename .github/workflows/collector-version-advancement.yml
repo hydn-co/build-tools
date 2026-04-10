@@ -4,7 +4,7 @@ on:
   workflow_call:
     outputs:
       version:
-        description: "Version extracted from the collector manifest"
+        description: "Version computed from GitVersion"
         value: ${{ jobs.version-advancement.outputs.version }}
       tag:
         description: "Normalized release tag"
@@ -32,6 +32,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4.4.2
+        with:
+          versionSpec: "6.7.x"
+
+      - name: Calculate GitVersion
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4.4.2
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -48,6 +59,8 @@ jobs:
       - name: Check version advancement
         id: version
         shell: bash
+        env:
+          GITVERSION_SEMVER: ${{ steps.gitversion.outputs.semVer }}
         run: |
           set -euo pipefail
 
@@ -55,16 +68,32 @@ jobs:
           echo "1ff4a97e4d1e389f6f034f7464ac4365f1be2d900e2dc2121e24a6dc239e8991  semver" | shasum -a 256 -c -
           chmod +x semver
 
-          go run ./cmd/... -describe
-
-          VERSION=$(jq -r '.version' manifest.json)
-          if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
-            echo "::error::No version found in manifest.json."
+          VERSION="${GITVERSION_SEMVER#v}"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::GitVersion did not produce a semantic version."
             exit 1
           fi
 
           if ! ./semver validate "$VERSION" >/dev/null 2>&1; then
-            echo "::error::Manifest version '$VERSION' is not valid semver."
+            echo "::error::GitVersion semver '$VERSION' is not valid semver."
+            exit 1
+          fi
+
+          go run ./cmd/... -describe
+
+          EXISTING_VERSION=$(jq -r 'if has("version") and .version != null then .version else "" end' manifest.json)
+          if [[ -n "$EXISTING_VERSION" ]]; then
+            echo "::error::manifest.json must not contain a source-owned version. Found '$EXISTING_VERSION'."
+            exit 1
+          fi
+
+          tmp_manifest=$(mktemp)
+          jq --arg version "$VERSION" '.version = $version' manifest.json > "$tmp_manifest"
+          mv "$tmp_manifest" manifest.json
+
+          INJECTED_VERSION=$(jq -r '.version' manifest.json)
+          if [[ "$INJECTED_VERSION" != "$VERSION" ]]; then
+            echo "::error::Injected manifest version '$INJECTED_VERSION' did not match GitVersion semver '$VERSION'."
             exit 1
           fi
 

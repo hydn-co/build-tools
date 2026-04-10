@@ -56,7 +56,7 @@ Creates a multi-architecture manifest combining amd64 and arm64 images.
 ### `.github/workflows/collector-version-advancement.yml`
 
 Reusable workflow for the CI-side version advancement check used by collector repositories.
-It assumes the collector contract: `go run ./cmd/... -describe` writes `manifest.json` with a `.version` field.
+It assumes the collector contract: the repository owns `GitVersion.yml`, `go run ./cmd/... -describe` writes `manifest.json` without a source-owned `version`, and the workflow injects the GitVersion semver into the manifest before validation.
 
 **Usage:**
 
@@ -69,7 +69,7 @@ jobs:
 ### `.github/workflows/collector-release.yml`
 
 Reusable workflow for validating a manifest version, building the standard collector GOOS/GOARCH matrix, generating checksum sidecars, and publishing a GitHub release.
-It assumes the collector contract: `go run ./cmd/... -describe` writes `manifest.json` with a `.version` field, the build target is `./cmd`, and release assets are named from the repository name plus the manifest version.
+It assumes the collector contract: the repository owns `GitVersion.yml`, `go run ./cmd/... -describe` writes `manifest.json` without a source-owned `version`, the workflow injects the GitVersion semver into the manifest, the build target is `./cmd`, and release assets are named from the repository name plus the injected version.
 
 **Usage:**
 
@@ -84,7 +84,7 @@ jobs:
 **Features:**
 
 - ✅ Default-branch guard for release dispatches
-- ✅ Manifest-driven semver validation and advancement checks
+- ✅ GitVersion-driven semver calculation with CI-side manifest injection
 - ✅ Standard collector GOOS and GOARCH matrix
 - ✅ Per-file checksum generation before release publication
 - ✅ GitHub release creation with generated notes
