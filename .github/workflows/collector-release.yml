@@ -166,13 +166,25 @@ jobs:
 
       - name: Build binary
         id: binary
-        uses: ./.github/actions/build-go-binary
-        with:
-          binary-prefix: ${{ github.event.repository.name }}-
-          goos: ${{ matrix.goos }}
-          goarch: ${{ matrix.goarch }}
-          build-target: ./cmd
-          cgo-enabled: "0"
+        shell: bash
+        env:
+          BINARY_PREFIX: ${{ github.event.repository.name }}-
+          GOOS_VALUE: ${{ matrix.goos }}
+          GOARCH_VALUE: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+
+          FILENAME="${BINARY_PREFIX}${GOOS_VALUE}-${GOARCH_VALUE}"
+          if [[ "$GOOS_VALUE" == "windows" ]]; then
+            FILENAME="${FILENAME}.exe"
+          fi
+
+          OUTPUT_PATH="$GITHUB_WORKSPACE/$FILENAME"
+          GOOS="$GOOS_VALUE" GOARCH="$GOARCH_VALUE" CGO_ENABLED="0" \
+            go build -o "$OUTPUT_PATH" ./cmd
+
+          echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
+          echo "path=$OUTPUT_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

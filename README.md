@@ -51,22 +51,6 @@ Creates a multi-architecture manifest combining amd64 and arm64 images.
 - ✅ Idempotent (skips if manifest already exists)
 - ✅ Returns manifest reference as output
 
-#### `.github/actions/build-go-binary`
-
-Builds a single collector binary for a given `GOOS` and `GOARCH` and names it using `{binary-prefix}{goos}-{goarch}`.
-
-**Usage:**
-
-```yaml
-- uses: hydn-co/build-tools/.github/actions/build-go-binary@main
-  with:
-    binary-prefix: mesh-azure-
-    goos: linux
-    goarch: amd64
-    build-target: ./cmd
-    cgo-enabled: "0"
-```
-
 ## 🔁 Reusable Workflows
 
 ### `.github/workflows/collector-version-advancement.yml`
