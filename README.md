@@ -83,8 +83,8 @@ jobs:
 
 **Features:**
 
-- ✅ Default-branch guard for release dispatches
-- ✅ GitVersion-driven semver calculation with CI-side manifest injection
+- ✅ Release-branch guard for default and develop branches (`dev`, `develop`, `development`)
+- ✅ GitVersion-driven semver calculation with CI-side manifest injection (`develop` releases retain the `alpha` prerelease suffix)
 - ✅ Standard collector GOOS and GOARCH matrix
 - ✅ Per-file checksum generation before release publication
 - ✅ GitHub release creation with generated notes
