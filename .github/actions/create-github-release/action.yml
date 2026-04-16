@@ -1,0 +1,74 @@
+name: Create GitHub release
+description: >-
+  Runs gh release create with --generate-notes. Requires GH_TOKEN with contents write for releases.
+
+inputs:
+  tag:
+    description: Release tag
+    required: true
+  title:
+    description: Release title
+    required: true
+  files:
+    description: "File glob(s) passed to gh release create (e.g. dist/*)"
+    required: true
+
+outputs:
+  url:
+    description: Web URL of the created release
+    value: ${{ steps.create.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create release
+      id: create
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        TITLE: ${{ inputs.title }}
+        FILES: ${{ inputs.files }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${TAG}" ]]; then
+          echo "::error::create-github-release: tag input is empty."
+          exit 1
+        fi
+        if [[ -z "${TITLE}" ]]; then
+          echo "::error::create-github-release: title input is empty."
+          exit 1
+        fi
+        if [[ -z "${FILES}" ]]; then
+          echo "::error::create-github-release: files input is empty."
+          exit 1
+        fi
+
+        shopt -s nullglob
+        set -- ${FILES}
+        if [[ "$#" -eq 0 ]]; then
+          echo "::error::No files matched pattern '${FILES}'. Paths are relative to the workspace; use e.g. dist/* after download-artifact."
+          exit 1
+        fi
+
+        set +e
+        create_out=$(gh release create "$TAG" --title "$TITLE" --generate-notes "$@" 2>&1)
+        create_ec=$?
+        set -e
+        if [[ "$create_ec" -ne 0 ]]; then
+          flat=$(echo "$create_out" | tr '\n' ' ')
+          echo "::error::gh release create failed (exit ${create_ec}) for tag '${TAG}'. Output: ${flat}"
+          exit 1
+        fi
+
+        set +e
+        URL=$(gh release view "$TAG" --json url --jq '.url' 2>&1)
+        url_ec=$?
+        set -e
+        if [[ "$url_ec" -ne 0 ]] || [[ -z "$URL" ]] || [[ ! "$URL" =~ ^https:// ]]; then
+          flat=$(echo "$URL" | tr '\n' ' ')
+          echo "::error::Release may have been created for '${TAG}' but could not read a release URL (gh exit ${url_ec}). Output: ${flat}"
+          exit 1
+        fi
+
+        echo "url=$URL" >> "$GITHUB_OUTPUT"

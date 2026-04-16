@@ -1,0 +1,40 @@
+name: Assert GitHub release absent
+description: Fails if gh release view succeeds for the given tag. Requires GH_TOKEN.
+
+inputs:
+  tag:
+    description: Release tag (e.g. v1.2.3)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Guard duplicate GitHub release
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${TAG}" ]]; then
+          echo "::error::assert-github-release-absent: tag input is empty."
+          exit 1
+        fi
+
+        gh_not_found_message() {
+          echo "$1" | grep -qiE 'not found|release not found|404|unknown release|could not find|no release'
+        }
+
+        set +e
+        view_out=$(gh release view "$TAG" 2>&1)
+        view_ec=$?
+        set -e
+        if [[ "$view_ec" -eq 0 ]]; then
+          echo "::error::Release ${TAG} already exists. Aborting."
+          exit 1
+        fi
+        if ! gh_not_found_message "$view_out"; then
+          flat=$(echo "$view_out" | tr '\n' ' ')
+          echo "::error::Could not verify that release '${TAG}' does not exist (gh exit ${view_ec}). Ensure GH_TOKEN has contents:read. Output: ${flat}"
+          exit 1
+        fi

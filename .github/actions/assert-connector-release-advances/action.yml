@@ -1,0 +1,104 @@
+name: Assert connector release advances
+description: >-
+  Ensures the GitVersion-based version has no existing GitHub release, is strictly greater than the
+  highest existing v* release tag (using sort -V ordering, not full SemVer 2), and writes version,
+  tag, and max-version outputs. Requires GH_TOKEN for gh.
+
+inputs:
+  semver:
+    description: "GitVersion SemVer output (with or without leading v)"
+    required: true
+
+outputs:
+  version:
+    description: "Normalized version without leading v"
+    value: ${{ steps.assert.outputs.version }}
+  tag:
+    description: "Release tag v{version}"
+    value: ${{ steps.assert.outputs.tag }}
+  max-version:
+    description: "Highest existing v* release version found (no v prefix), or empty"
+    value: ${{ steps.assert.outputs.max-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Assert release advances
+      id: assert
+      shell: bash
+      env:
+        GITVERSION_SEMVER: ${{ inputs.semver }}
+      run: |
+        set -euo pipefail
+
+        VERSION="${GITVERSION_SEMVER#v}"
+        if [[ -z "$VERSION" ]]; then
+          echo "::error::GitVersion did not produce a semantic version."
+          exit 1
+        fi
+
+        # SemVer-ish filter for release tag bodies (after v); ordering uses sort -V, not full SemVer 2.
+        semverish() {
+          local s="$1"
+          [[ "$s" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
+        }
+
+        gh_not_found_message() {
+          echo "$1" | grep -qiE 'not found|release not found|404|unknown release|could not find|no release'
+        }
+
+        TAG="v${VERSION}"
+
+        set +e
+        view_out=$(gh release view "$TAG" 2>&1)
+        view_ec=$?
+        set -e
+        if [[ "$view_ec" -eq 0 ]]; then
+          echo "::error::Release ${TAG} already exists."
+          exit 1
+        fi
+        if ! gh_not_found_message "$view_out"; then
+          flat=$(echo "$view_out" | tr '\n' ' ')
+          echo "::error::Could not verify that release '${TAG}' does not exist (gh exit ${view_ec}). Ensure GH_TOKEN has contents:read for this repository. Output: ${flat}"
+          exit 1
+        fi
+
+        set +e
+        list_out=$(gh release list --limit 1000 --json tagName --jq '.[].tagName' 2>&1)
+        list_ec=$?
+        set -e
+        if [[ "$list_ec" -ne 0 ]]; then
+          flat=$(echo "$list_out" | tr '\n' ' ')
+          echo "::error::Failed to list GitHub releases (gh exit ${list_ec}). Ensure GH_TOKEN has contents:read. Output: ${flat}"
+          exit 1
+        fi
+
+        MAX_VERSION=""
+        while IFS= read -r RELEASE_TAG; do
+          [[ -z "$RELEASE_TAG" ]] && continue
+          [[ "$RELEASE_TAG" != v* ]] && continue
+          RELEASE_VERSION=${RELEASE_TAG#v}
+          semverish "$RELEASE_VERSION" || continue
+
+          if [[ -z "$MAX_VERSION" ]]; then
+            MAX_VERSION="$RELEASE_VERSION"
+            continue
+          fi
+
+          higher=$(printf '%s\n' "$MAX_VERSION" "$RELEASE_VERSION" | sort -V | tail -n1)
+          if [[ "$higher" == "$RELEASE_VERSION" ]]; then
+            MAX_VERSION="$RELEASE_VERSION"
+          fi
+        done <<< "$list_out"
+
+        if [[ -n "$MAX_VERSION" ]]; then
+          top=$(printf '%s\n' "$VERSION" "$MAX_VERSION" | sort -V | tail -n1)
+          if [[ "$top" != "$VERSION" ]] || [[ "$VERSION" == "$MAX_VERSION" ]]; then
+            echo "::error::${VERSION} does not advance beyond highest existing release ${MAX_VERSION}."
+            exit 1
+          fi
+        fi
+
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "max-version=$MAX_VERSION" >> "$GITHUB_OUTPUT"

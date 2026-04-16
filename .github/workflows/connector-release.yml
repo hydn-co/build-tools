@@ -1,0 +1,157 @@
+name: Connector Release
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: "Version computed from GitVersion"
+        value: ${{ jobs.validate.outputs.version }}
+      tag:
+        description: "Normalized release tag"
+        value: ${{ jobs.validate.outputs.tag }}
+      release-url:
+        description: "URL of the GitHub release created by the workflow"
+        value: ${{ jobs.publish.outputs.release-url }}
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  gitversion:
+    name: Version
+    uses: ./.github/workflows/version.yml
+    permissions:
+      contents: read
+
+  validate:
+    name: Validate
+    needs: gitversion
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - uses: ./.github/actions/guard-connector-release-branch
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "**/go.sum"
+          check-latest: false
+
+      - name: Download modules
+        shell: bash
+        run: go mod download
+
+      - uses: ./.github/actions/describe-connector
+
+      - uses: ./.github/actions/inject-connector-manifest-version
+        with:
+          semver: ${{ needs.gitversion.outputs.version }}
+
+      - uses: ./.github/actions/assert-connector-release-advances
+        id: version
+        with:
+          semver: ${{ needs.gitversion.outputs.version }}
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-manifest
+          path: manifest.json
+
+  # Cross-compile all targets on Linux (CGO off). When adding code signing, keep complexity in small
+  # composites under .github/actions/ (e.g. sign-connector-macos, sign-connector-windows) and minimal
+  # workflow glue. Expected layout: (1) keep this build job unchanged; (2) add job(s) needs: build with
+  # runs-on: macos-latest / windows-latest only where Apple/Authenticode signing requires a native host,
+  # each job downloads the matching artifact(s), runs one composite, re-uploads with the same artifact
+  # naming convention so publish stays unchanged; (3) optional Linux gpg detached sigs can run on ubuntu.
+  build:
+    name: Build (${{ matrix.goos }}-${{ matrix.goarch }})
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: ppc64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - uses: ./.github/actions/build-connector
+        id: binary
+        with:
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          version: ${{ needs.validate.outputs.version }}
+          binary-prefix: ${{ format('{0}-', github.event.repository.name) }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ needs.validate.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ steps.binary.outputs.path }}
+
+  publish:
+    name: Publish
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      release-url: ${{ steps.release.outputs.url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: ./.github/actions/hash-release-assets
+        with:
+          working-directory: dist
+          asset-prefix: ${{ format('{0}-{1}-', github.event.repository.name, needs.validate.outputs.version) }}
+
+      - uses: ./.github/actions/assert-github-release-absent
+        with:
+          tag: ${{ needs.validate.outputs.tag }}
+
+      - uses: ./.github/actions/create-github-release
+        id: release
+        with:
+          tag: ${{ needs.validate.outputs.tag }}
+          title: ${{ format('{0} {1}', github.event.repository.name, needs.validate.outputs.version) }}
+          files: dist/*
