@@ -70,6 +70,44 @@ jobs:
           name: release-manifest
           path: manifest.json
 
+      - name: Prepare logos
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HAS_SINGLE=false
+          HAS_LIGHT=false
+          HAS_DARK=false
+
+          [[ -f "iconography/logo.svg" ]]       && HAS_SINGLE=true || true
+          [[ -f "iconography/logo-light.svg" ]] && HAS_LIGHT=true  || true
+          [[ -f "iconography/logo-dark.svg" ]]  && HAS_DARK=true   || true
+
+          if [[ "$HAS_LIGHT" == "true" && "$HAS_DARK" == "false" ]] || \
+             [[ "$HAS_LIGHT" == "false" && "$HAS_DARK" == "true" ]]; then
+            echo "::error::Incomplete light/dark logo pair: both iconography/logo-light.svg and iconography/logo-dark.svg must be present together."
+            exit 1
+          fi
+
+          if [[ "$HAS_LIGHT" == "false" && "$HAS_SINGLE" == "false" ]]; then
+            echo "::error::No logo found. Provide iconography/logo.svg for a single logo, or iconography/logo-light.svg + iconography/logo-dark.svg for a themed pair."
+            exit 1
+          fi
+
+          mkdir -p dist-logos
+          if [[ "$HAS_LIGHT" == "true" ]]; then
+            cp iconography/logo-light.svg dist-logos/logo-light.svg
+            cp iconography/logo-dark.svg  dist-logos/logo-dark.svg
+          else
+            cp iconography/logo.svg dist-logos/logo.svg
+          fi
+
+      - name: Upload logos artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-logos
+          path: dist-logos/
+
   # Cross-compile all targets on Linux (CGO off). When adding code signing, keep complexity in small
   # composites under .github/actions/ (e.g. sign-connector-macos, sign-connector-windows) and minimal
   # workflow glue. Expected layout: (1) keep this build job unchanged; (2) add job(s) needs: build with
