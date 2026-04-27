@@ -39,7 +39,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - uses: ./.github/actions/guard-connector-release-branch
+      - uses: hydn-co/build-tools/.github/actions/guard-connector-release-branch@main
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -53,13 +53,13 @@ jobs:
         shell: bash
         run: go mod download
 
-      - uses: ./.github/actions/describe-connector
+      - uses: hydn-co/build-tools/.github/actions/describe-connector@main
 
-      - uses: ./.github/actions/inject-connector-manifest-version
+      - uses: hydn-co/build-tools/.github/actions/inject-connector-manifest-version@main
         with:
           semver: ${{ needs.gitversion.outputs.version }}
 
-      - uses: ./.github/actions/assert-connector-release-advances
+      - uses: hydn-co/build-tools/.github/actions/assert-connector-release-advances@main
         id: version
         with:
           semver: ${{ needs.gitversion.outputs.version }}
@@ -106,7 +106,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - uses: ./.github/actions/build-connector
+      - uses: hydn-co/build-tools/.github/actions/build-connector@main
         id: binary
         with:
           goos: ${{ matrix.goos }}
@@ -140,16 +140,16 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - uses: ./.github/actions/hash-release-assets
+      - uses: hydn-co/build-tools/.github/actions/hash-release-assets@main
         with:
           working-directory: dist
           asset-prefix: ${{ format('{0}-{1}-', github.event.repository.name, needs.validate.outputs.version) }}
 
-      - uses: ./.github/actions/assert-github-release-absent
+      - uses: hydn-co/build-tools/.github/actions/assert-github-release-absent@main
         with:
           tag: ${{ needs.validate.outputs.tag }}
 
-      - uses: ./.github/actions/create-github-release
+      - uses: hydn-co/build-tools/.github/actions/create-github-release@main
         id: release
         with:
           tag: ${{ needs.validate.outputs.tag }}
