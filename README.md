@@ -51,44 +51,6 @@ Creates a multi-architecture manifest combining amd64 and arm64 images.
 - ✅ Idempotent (skips if manifest already exists)
 - ✅ Returns manifest reference as output
 
-## 🔁 Reusable Workflows
-
-### `.github/workflows/collector-version-advancement.yml`
-
-Reusable workflow for the CI-side version advancement check used by collector repositories.
-It assumes the collector contract: the repository owns `GitVersion.yml`, `go run ./cmd/... -describe` writes `manifest.json` without a source-owned `version`, and the workflow injects the GitVersion semver into the manifest before validation.
-
-**Usage:**
-
-```yaml
-jobs:
-  version-advancement:
-    uses: hydn-co/build-tools/.github/workflows/collector-version-advancement.yml@main
-```
-
-### `.github/workflows/collector-release.yml`
-
-Reusable workflow for validating a manifest version, building the standard collector GOOS/GOARCH matrix, generating checksum sidecars, and publishing a GitHub release.
-It assumes the collector contract: the repository owns `GitVersion.yml`, `go run ./cmd/... -describe` writes `manifest.json` without a source-owned `version`, the workflow injects the GitVersion semver into the manifest, the build target is `./cmd`, and release assets are named from the repository name plus the injected version.
-
-**Usage:**
-
-```yaml
-jobs:
-  release:
-    permissions:
-      contents: write
-    uses: hydn-co/build-tools/.github/workflows/collector-release.yml@main
-```
-
-**Features:**
-
-- ✅ Release-branch guard for default and develop branches (`dev`, `develop`, `development`)
-- ✅ GitVersion-driven semver calculation with CI-side manifest injection (`develop` releases retain the `alpha` prerelease suffix)
-- ✅ Standard collector GOOS and GOARCH matrix
-- ✅ Per-file checksum generation before release publication
-- ✅ GitHub release creation with generated notes
-
 ### Deployment Actions
 
 #### `.github/actions/deploy-bicep`
