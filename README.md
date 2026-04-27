@@ -51,6 +51,28 @@ Creates a multi-architecture manifest combining amd64 and arm64 images.
 - ✅ Idempotent (skips if manifest already exists)
 - ✅ Returns manifest reference as output
 
+### Connector Actions
+
+#### `.github/actions/inject-connector-manifest-version`
+
+Injects a GitVersion-derived semver into `manifest.json`. Requires that the file has no source-owned `version` field before injection.
+
+**Usage:**
+
+```yaml
+- uses: hydn-co/build-tools/.github/actions/inject-connector-manifest-version@main
+  with:
+    semver: ${{ needs.gitversion.outputs.version }} # GitVersion SemVer (leading v stripped automatically)
+    manifest-path: manifest.json                    # Optional, default: manifest.json
+```
+
+**Features:**
+
+- ✅ Validates `manifest.json` exists and is valid JSON before writing
+- ✅ Rejects any manifest that already carries a source-owned `version` field
+- ✅ Strips leading `v` from semver before writing to JSON
+- ✅ Verifies the injected value round-trips correctly after write
+
 ### Deployment Actions
 
 #### `.github/actions/deploy-bicep`
@@ -216,7 +238,32 @@ Removes old Azure Container Registry image tags for a single repository, keeping
 - Designed for immutable, uniquely tagged release images in ACR
 - Uses `az acr repository delete --image`, so tags sharing a digest with protected tags are skipped
 
-## 🔄 Migration Guide
+## � Reusable Workflows
+
+### `.github/workflows/connector-release.yml`
+
+Reusable workflow for releasing a connector. Handles GitVersion calculation, manifest injection, cross-compilation across the standard GOOS/GOARCH matrix, checksum generation, and GitHub release publication.
+
+Assumes the connector contract: the repository owns `GitVersion.yml`, `go run ./cmd/... -describe` writes `manifest.json` without a source-owned `version`, the build target is `./cmd`, and release assets are named `<repo>-<version>-<goos>-<goarch>[.exe]`.
+
+**Usage:**
+
+```yaml
+jobs:
+  release:
+    uses: hydn-co/build-tools/.github/workflows/connector-release.yml@main
+```
+
+**Features:**
+
+- ✅ Release-branch guard for default and develop branches (`dev`, `develop`, `development`)
+- ✅ GitVersion-driven semver via the reusable `version.yml` workflow (`develop` releases retain the `alpha` prerelease suffix)
+- ✅ CI-side manifest injection via `inject-connector-manifest-version`
+- ✅ Standard GOOS/GOARCH build matrix (linux/amd64, linux/arm, linux/arm64, linux/ppc64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64)
+- ✅ Per-file SHA-256 checksum sidecars before release publication
+- ✅ GitHub release creation with auto-generated notes
+
+## �🔄 Migration Guide
 
 ### From Local Actions to Centralized
 
