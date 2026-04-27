@@ -73,6 +73,26 @@ Injects a GitVersion-derived semver into `manifest.json`. Requires that the file
 - ✅ Strips leading `v` from semver before writing to JSON
 - ✅ Verifies the injected value round-trips correctly after write
 
+#### `.github/actions/prepare-connector-logos`
+
+Validates and stages connector logos from the `iconography/` directory. Supports either a single `logo.svg` or a matched light/dark pair (`logo-light.svg` + `logo-dark.svg`).
+
+**Usage:**
+
+```yaml
+- uses: hydn-co/build-tools/.github/actions/prepare-connector-logos@main
+  with:
+    iconography-dir: iconography  # Optional, default: iconography
+    output-dir: dist-logos        # Optional, default: dist-logos
+```
+
+**Features:**
+
+- ✅ Validates logo file(s) exist in the iconography directory
+- ✅ Enforces light/dark logo pairing (both or neither, no orphans)
+- ✅ Stages validated logos into output directory as artifact
+- ✅ Clear error messages for missing or incomplete logo pairs
+
 ### Deployment Actions
 
 #### `.github/actions/deploy-bicep`
