@@ -1,8 +1,8 @@
 name: Assert connector release advances
 description: >-
-  Ensures the GitVersion-based version has no existing GitHub release, is strictly greater than the
-  highest existing v* release tag (using SemVer 2 ordering per spec §11), and writes version,
-  tag, and max-version outputs. Requires GH_TOKEN for gh.
+  Ensures the GitVersion-based version has no existing GitHub release and is strictly greater than
+  the highest existing v* release tag per SemVer 2.0 (via the semver npm CLI).
+  Writes version, tag, and max-version outputs. Requires GH_TOKEN for gh.
 
 inputs:
   semver:
@@ -23,6 +23,8 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: hydn-co/build-tools/.github/actions/install-semver-tool@main
+
     - name: Assert release advances
       id: assert
       shell: bash
@@ -36,59 +38,6 @@ runs:
           echo "::error::GitVersion did not produce a semantic version."
           exit 1
         fi
-
-        # SemVer-ish filter for release tag bodies (after v); ordering uses SemVer 2 §11.
-        semverish() {
-          local s="$1"
-          [[ "$s" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
-        }
-
-        # Returns 0 (true) if $1 > $2 per SemVer 2 §11.
-        # Pre-release has lower precedence than its associated release (§11.3).
-        semver_gt() {
-          local a="$1" b="$2"
-          # Strip build metadata (§10)
-          a="${a%%+*}"; b="${b%%+*}"
-          # Split core and pre-release
-          local a_core="${a%%-*}" a_pre="" b_core="${b%%-*}" b_pre=""
-          [[ "$a" == *-* ]] && a_pre="${a#*-}"
-          [[ "$b" == *-* ]] && b_pre="${b#*-}"
-
-          # Compare numeric core segments (major.minor.patch)
-          IFS='.' read -r a1 a2 a3 <<< "$a_core"
-          IFS='.' read -r b1 b2 b3 <<< "$b_core"
-          for pair in "$a1:$b1" "$a2:$b2" "$a3:$b3"; do
-            local av="${pair%%:*}" bv="${pair##*:}"
-            (( av > bv )) && return 0
-            (( av < bv )) && return 1
-          done
-
-          # Cores equal: a release > pre-release (§11.3)
-          [[ -z "$a_pre" && -n "$b_pre" ]] && return 0   # a is release, b is pre-release → a wins
-          [[ -n "$a_pre" && -z "$b_pre" ]] && return 1   # a is pre-release, b is release → b wins
-          [[ -z "$a_pre" && -z "$b_pre" ]] && return 1   # equal
-
-          # Both have pre-release: compare dot-separated identifiers (§11.4)
-          IFS='.' read -ra a_ids <<< "$a_pre"
-          IFS='.' read -ra b_ids <<< "$b_pre"
-          local i=0
-          while true; do
-            local a_has=$(( i < ${#a_ids[@]} ? 1 : 0 ))
-            local b_has=$(( i < ${#b_ids[@]} ? 1 : 0 ))
-            (( !a_has && !b_has )) && return 1  # equal
-            (( !a_has )) && return 1            # fewer fields loses (§11.4.4)
-            (( !b_has )) && return 0
-            local ai="${a_ids[$i]}" bi="${b_ids[$i]}"
-            if [[ "$ai" =~ ^[0-9]+$ && "$bi" =~ ^[0-9]+$ ]]; then
-              (( ai > bi )) && return 0
-              (( ai < bi )) && return 1
-            else
-              [[ "$ai" > "$bi" ]] && return 0
-              [[ "$ai" < "$bi" ]] && return 1
-            fi
-            (( i++ ))
-          done
-        }
 
         gh_not_found_message() {
           echo "$1" | grep -qiE 'not found|release not found|404|unknown release|could not find|no release'
@@ -120,23 +69,21 @@ runs:
           exit 1
         fi
 
-        MAX_VERSION=""
+        # Collect all valid v* release tags and let semver pick the highest (SemVer 2 ordering).
+        VERSIONS=()
         while IFS= read -r RELEASE_TAG; do
-          [[ -z "$RELEASE_TAG" ]] && continue
-          [[ "$RELEASE_TAG" != v* ]] && continue
-          RELEASE_VERSION=${RELEASE_TAG#v}
-          semverish "$RELEASE_VERSION" || continue
-
-          if [[ -z "$MAX_VERSION" ]]; then
-            MAX_VERSION="$RELEASE_VERSION"
-            continue
-          fi
-
-          semver_gt "$RELEASE_VERSION" "$MAX_VERSION" && MAX_VERSION="$RELEASE_VERSION"
+          [[ -z "$RELEASE_TAG" || "$RELEASE_TAG" != v* ]] && continue
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          semver "$RELEASE_VERSION" > /dev/null 2>&1 && VERSIONS+=("$RELEASE_VERSION")
         done <<< "$list_out"
 
+        MAX_VERSION=""
+        if [[ ${#VERSIONS[@]} -gt 0 ]]; then
+          MAX_VERSION=$(semver "${VERSIONS[@]}" | tail -n1)
+        fi
+
         if [[ -n "$MAX_VERSION" ]]; then
-          if ! semver_gt "$VERSION" "$MAX_VERSION"; then
+          if ! semver -r ">$MAX_VERSION" "$VERSION" > /dev/null 2>&1; then
             echo "::error::${VERSION} does not advance beyond highest existing release ${MAX_VERSION}."
             exit 1
           fi

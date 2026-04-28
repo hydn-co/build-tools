@@ -1,0 +1,11 @@
+name: Install semver tool
+description: >-
+  Installs the semver npm package globally, making the semver CLI available
+  for SemVer 2.0-compliant version comparisons in subsequent steps.
+
+runs:
+  using: composite
+  steps:
+    - name: Install semver CLI
+      shell: bash
+      run: npm install --global semver
