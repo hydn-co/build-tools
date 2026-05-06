@@ -1,0 +1,17 @@
+name: Describe connector
+description: Runs go run ./cmd/... -describe (connector manifest / metadata validation).
+
+runs:
+  using: composite
+  steps:
+    - name: Describe
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [[ ! -f go.mod ]]; then
+          echo "::error::go.mod not found in ${GITHUB_WORKSPACE:-the workspace root}. describe-connector expects a Go module at the repository root."
+          exit 1
+        fi
+
+        go run ./cmd/... -describe

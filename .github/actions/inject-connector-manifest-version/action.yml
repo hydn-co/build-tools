@@ -1,0 +1,67 @@
+name: Inject connector manifest version
+description: >-
+  Requires manifest.json to have no source-owned version field, then sets .version from GitVersion semVer
+  (optional leading v stripped for the JSON field).
+
+inputs:
+  semver:
+    description: "GitVersion SemVer output (with or without leading v)"
+    required: true
+  manifest-path:
+    description: Path to manifest.json
+    required: false
+    default: manifest.json
+
+runs:
+  using: composite
+  steps:
+    - name: Inject version into manifest
+      shell: bash
+      env:
+        GITVERSION_SEMVER: ${{ inputs.semver }}
+        MANIFEST_PATH: ${{ inputs.manifest-path }}
+      run: |
+        set -euo pipefail
+
+        VERSION="${GITVERSION_SEMVER#v}"
+        if [[ -z "$VERSION" ]]; then
+          echo "::error::SemVer input did not produce a version string after stripping leading v."
+          exit 1
+        fi
+
+        if [[ ! -f "$MANIFEST_PATH" ]]; then
+          echo "::error::Manifest file not found: ${MANIFEST_PATH} (workspace: ${GITHUB_WORKSPACE:-unset})."
+          exit 1
+        fi
+
+        set +e
+        jq_err=$(jq empty "$MANIFEST_PATH" 2>&1)
+        jq_ec=$?
+        set -e
+        if [[ "$jq_ec" -ne 0 ]]; then
+          flat=$(echo "$jq_err" | tr '\n' ' ')
+          echo "::error::${MANIFEST_PATH} is not valid JSON or jq could not read it (exit ${jq_ec}): ${flat}"
+          exit 1
+        fi
+
+        EXISTING_VERSION=$(jq -r 'if has("version") and .version != null then .version else "" end' "$MANIFEST_PATH")
+        if [[ -n "$EXISTING_VERSION" ]]; then
+          echo "::error::${MANIFEST_PATH} must not contain a source-owned version. Found '${EXISTING_VERSION}'."
+          exit 1
+        fi
+
+        tmp_manifest=$(mktemp)
+        if ! jq --arg version "$VERSION" '.version = $version' "$MANIFEST_PATH" > "$tmp_manifest" 2>"${tmp_manifest}.err"; then
+          flat=$(tr '\n' ' ' < "${tmp_manifest}.err" || true)
+          rm -f "$tmp_manifest" "${tmp_manifest}.err"
+          echo "::error::Failed to build updated manifest with jq: ${flat}"
+          exit 1
+        fi
+        rm -f "${tmp_manifest}.err"
+        mv "$tmp_manifest" "$MANIFEST_PATH"
+
+        INJECTED_VERSION=$(jq -r '.version' "$MANIFEST_PATH")
+        if [[ "$INJECTED_VERSION" != "$VERSION" ]]; then
+          echo "::error::Injected manifest version '${INJECTED_VERSION}' did not match expected '${VERSION}'."
+          exit 1
+        fi

@@ -1,0 +1,93 @@
+name: Build connector binary
+description: >-
+  Cross-compiles one connector binary (GOOS/GOARCH) with CGO disabled. Caller supplies matrix values
+  and uploads the artifact.
+
+inputs:
+  goos:
+    description: Target GOOS
+    required: true
+  goarch:
+    description: Target GOARCH
+    required: true
+  version:
+    description: Version string for filename (no leading v)
+    required: true
+  binary-prefix:
+    description: "Filename prefix (e.g. repo-name-)"
+    required: true
+  go-version-file:
+    description: Path to go.mod for Go version
+    required: false
+    default: go.mod
+  cache-dependency-path:
+    description: Path pattern for module cache
+    required: false
+    default: "**/go.sum"
+  package:
+    description: Package path to build
+    required: false
+    default: ./cmd
+
+outputs:
+  filename:
+    description: Output filename (under workspace root)
+    value: ${{ steps.build.outputs.filename }}
+  path:
+    description: Absolute path to the built binary
+    value: ${{ steps.build.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v6
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+        cache: true
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+        check-latest: false
+
+    - name: go mod download
+      shell: bash
+      run: go mod download
+
+    - name: Build binary
+      id: build
+      shell: bash
+      env:
+        BINARY_PREFIX: ${{ inputs.binary-prefix }}
+        VERSION: ${{ inputs.version }}
+        GOOS_VALUE: ${{ inputs.goos }}
+        GOARCH_VALUE: ${{ inputs.goarch }}
+        PACKAGE: ${{ inputs.package }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${GOOS_VALUE}" ]] || [[ -z "${GOARCH_VALUE}" ]]; then
+          echo "::error::build-connector: goos and goarch inputs must be non-empty (got goos='${GOOS_VALUE}' goarch='${GOARCH_VALUE}')."
+          exit 1
+        fi
+        if [[ -z "${VERSION}" ]]; then
+          echo "::error::build-connector: version input must be non-empty."
+          exit 1
+        fi
+        if [[ -z "${BINARY_PREFIX}" ]]; then
+          echo "::error::build-connector: binary-prefix input must be non-empty."
+          exit 1
+        fi
+        if [[ ! -f go.mod ]]; then
+          echo "::error::go.mod not found in ${GITHUB_WORKSPACE:-workspace root}; build-connector expects a Go module at the repository root."
+          exit 1
+        fi
+
+        FILENAME="${BINARY_PREFIX}${VERSION}-${GOOS_VALUE}-${GOARCH_VALUE}"
+        if [[ "$GOOS_VALUE" == "windows" ]]; then
+          FILENAME="${FILENAME}.exe"
+        fi
+
+        OUTPUT_PATH="$GITHUB_WORKSPACE/$FILENAME"
+        GOOS="$GOOS_VALUE" GOARCH="$GOARCH_VALUE" CGO_ENABLED="0" \
+          go build -o "$OUTPUT_PATH" "$PACKAGE"
+
+        echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
+        echo "path=$OUTPUT_PATH" >> "$GITHUB_OUTPUT"

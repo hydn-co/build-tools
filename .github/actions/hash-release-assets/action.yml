@@ -1,0 +1,47 @@
+name: Hash release assets
+description: >-
+  In working-directory, writes sha256 checksum files for each regular file matching asset-prefix*.
+  Fails if no files match.
+
+inputs:
+  working-directory:
+    description: Directory containing release assets (relative to workspace)
+    required: false
+    default: dist
+  asset-prefix:
+    description: "Filename prefix glob anchor (e.g. myapp-1.2.3-); matches asset-prefix*"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Generate per-file checksums
+      shell: bash
+      env:
+        WORKDIR: ${{ inputs.working-directory }}
+        ASSET_PREFIX: ${{ inputs.asset-prefix }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+
+        if [[ ! -d "$WORKDIR" ]]; then
+          echo "::error::working-directory is not a directory or does not exist: '${WORKDIR}' (workspace: ${GITHUB_WORKSPACE:-unset}). Download artifacts into this path before running hash-release-assets."
+          exit 1
+        fi
+
+        if ! cd "$WORKDIR"; then
+          echo "::error::Could not change directory to '${WORKDIR}'."
+          exit 1
+        fi
+
+        COUNT=0
+        for file in ${ASSET_PREFIX}*; do
+          [[ -f "$file" ]] || continue
+          sha256sum "$file" > "${file}.sha256"
+          COUNT=$((COUNT + 1))
+        done
+
+        if [[ "$COUNT" -eq 0 ]]; then
+          echo "::error::No release assets matched '${ASSET_PREFIX}*' in ${WORKDIR}/. List directory with 'ls -la' in a follow-up step to debug; check asset-prefix matches binary filenames."
+          exit 1
+        fi
