@@ -276,8 +276,8 @@ jobs:
 
 **Features:**
 
-- ✅ Release-branch guard for default and develop branches (`dev`, `develop`, `development`)
-- ✅ GitVersion-driven semver via the reusable `version.yml` workflow (`develop` releases retain the `alpha` prerelease suffix)
+- ✅ Release validation driven by GitVersion and release advancement checks
+- ✅ GitVersion-driven semver via the reusable `version.yml` workflow (`develop`-style refs retain the `alpha` prerelease suffix)
 - ✅ CI-side manifest injection via `inject-connector-manifest-version`
 - ✅ Standard GOOS/GOARCH build matrix (linux/amd64, linux/arm, linux/arm64, linux/ppc64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64)
 - ✅ Per-file SHA-256 checksum sidecars before release publication
