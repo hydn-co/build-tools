@@ -281,7 +281,7 @@ Federated credentials eliminate long-lived secrets for Azure deployments.
 5. **Workflow Usage:**
    ```yaml
    - name: Azure Login
-     uses: azure/login@v1
+     uses: azure/login@v3
      with:
        client-id: ${{ secrets.AZURE_CLIENT_ID }}
        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
