@@ -33,6 +33,10 @@ inputs:
     description: "Docker build context directory"
     required: false
     default: "."
+  build-secrets:
+    description: "BuildKit secrets for `docker buildx build`, one --secret spec per line (e.g. 'id=gh_token,env=GH_TOKEN'). The 'env=' form reads the named process env var at build time — set that var via step-level env on the calling step. Empty = no secrets (default)."
+    required: false
+    default: ""
 
 outputs:
   image:
@@ -104,6 +108,7 @@ runs:
         BUILD_CONTEXT: ${{ steps.prepare.outputs.build_context }}
         SEMVER: ${{ inputs.semver }}
         ARCH: ${{ inputs.arch }}
+        BUILD_SECRETS: ${{ inputs.build-secrets }}
       run: |
         set -euo pipefail
         ARGS=(--file "$DOCKERFILE" --platform "linux/$ARCH" --build-arg "SEMVER=$SEMVER" --tag "$IMAGE_REF")
@@ -111,6 +116,14 @@ runs:
           ARGS+=(--tag "$IMAGE:$BRANCH_TAG")
           ARGS+=(--cache-from "type=registry,ref=$IMAGE:$BRANCH_TAG")
           ARGS+=(--cache-to "type=registry,ref=$IMAGE:$BRANCH_TAG,mode=max")
+        fi
+        # Each non-empty line is a full buildx --secret spec (e.g.
+        # id=gh_token,env=GH_TOKEN). Empty default => no --secret added, so
+        # existing callers produce an identical buildx command.
+        if [ -n "${BUILD_SECRETS:-}" ]; then
+          while IFS= read -r secret_spec; do
+            [ -n "$secret_spec" ] && ARGS+=(--secret "$secret_spec")
+          done <<< "$BUILD_SECRETS"
         fi
         ARGS+=(--metadata-file /tmp/metadata.json --push "$BUILD_CONTEXT")
         docker buildx build "${ARGS[@]}"
