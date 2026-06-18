@@ -31,6 +31,16 @@ inputs:
     description: "Whether to verify deployment status after completion (true/false)"
     required: false
     default: "true"
+  extra-parameters:
+    description: |
+      Optional additional Bicep parameter overrides, one `key=value` per line.
+      Values may be scalars (`logLevel=debug`) or inline JSON for object/array
+      parameters (`extraEnv=[{"name":"FOO","value":"bar"}]`). Appended to the
+      deployment after applyCerts/semver, so consumers can inject environment-specific
+      parameters at deploy time without changing this action. The referenced
+      parameters must be declared in the template.
+    required: false
+    default: ""
 
 outputs:
   deployment-name:
@@ -58,6 +68,7 @@ runs:
         APPLY_CERTS: ${{ inputs.applyCerts }}
         SEMVER: ${{ inputs.semver }}
         VERIFY_DEPLOYMENT: ${{ inputs.verify-deployment }}
+        EXTRA_PARAMETERS: ${{ inputs.extra-parameters }}
       run: |
         set -euo pipefail
 
@@ -122,13 +133,33 @@ runs:
         echo "  Version: $SEMVER"
         echo "  Apply Certs: $APPLY_CERTS"
 
+        # Parse optional extra Bicep parameter overrides (one key=value per line).
+        EXTRA_ARGS=()
+        if [[ -n "${EXTRA_PARAMETERS:-}" ]]; then
+          while IFS= read -r raw; do
+            # Trim surrounding whitespace via parameter expansion (xargs would strip
+            # the quotes/brackets from inline JSON values such as arrays/objects).
+            line="$raw"
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -z "$line" ]] && continue
+            if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]; then
+              echo "❌ ERROR: Invalid extra parameter '$line'. Expected 'key=value'."
+              exit 1
+            fi
+            EXTRA_ARGS+=("$line")
+          done <<< "$EXTRA_PARAMETERS"
+          [[ ${#EXTRA_ARGS[@]} -gt 0 ]] && echo "  Extra params: ${EXTRA_ARGS[*]}"
+        fi
+
         if ! az deployment sub create \
           --name "$NAME" \
           --location "$LOCATION" \
           --template-file "$TEMPLATE" \
           --parameters "$PARAMS_FILE" \
             applyCerts="$APPLY_CERTS" \
-            semver="$SEMVER"; then
+            semver="$SEMVER" \
+            ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; then
           echo ""
           echo "❌ ERROR: Bicep deployment failed"
           echo "   Deployment name: $NAME"

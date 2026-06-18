@@ -1,0 +1,114 @@
+name: "Update Container App Image"
+description: "Rolls one or more Azure Container Apps to a new image without re-running Bicep. Existing environment variables, scale and probes are preserved."
+
+inputs:
+  environment:
+    description: "Target environment name (e.g., dev1, prod). Used to derive the resource group rg-<environment> when resource-group is not set."
+    required: true
+  resource-group:
+    description: "Resource group containing the container apps. Defaults to rg-<environment>."
+    required: false
+    default: ""
+  acr_name:
+    description: "Azure Container Registry short name (not FQDN). Used to resolve the login server."
+    required: true
+  images:
+    description: |
+      Newline-separated list of `repo:tag` entries to roll (e.g. `mesh-portald:1.2.3`).
+      For each entry the action finds the container app(s) in the resource group whose
+      current image is `<loginServer>/<repo>:...` and updates them to `<loginServer>/<repo>:<tag>`.
+    required: true
+
+outputs:
+  updated:
+    description: "Comma-separated list of container apps that were updated."
+    value: ${{ steps.roll.outputs.updated }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Update Container App Image(s)
+      id: roll
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+        ACR_NAME: ${{ inputs.acr_name }}
+        IMAGES: ${{ inputs.images }}
+      run: |
+        set -euo pipefail
+
+        # Verify Azure CLI is logged in
+        echo "🔍 Verifying Azure CLI authentication..."
+        if ! az account show >/dev/null 2>&1; then
+          echo "❌ ERROR: Not logged in to Azure CLI"
+          echo "   Run 'az login' or ensure OIDC authentication is configured."
+          exit 1
+        fi
+
+        RG="${RESOURCE_GROUP:-}"
+        [[ -z "$RG" ]] && RG="rg-$ENVIRONMENT"
+
+        # Resolve ACR login server
+        echo "🔍 Resolving ACR '$ACR_NAME'..."
+        if ! ACR_FQDN=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv 2>/dev/null); then
+          echo "❌ ERROR: Azure Container Registry '$ACR_NAME' not found"
+          exit 1
+        fi
+
+        echo "🚀 Rolling images in resource group: $RG"
+        echo "   Registry: $ACR_FQDN"
+
+        UPDATED=()
+        ANY=false
+
+        while IFS= read -r raw; do
+          entry="$(echo "$raw" | xargs)"
+          [[ -z "$entry" ]] && continue
+
+          REPO="${entry%%:*}"
+          TAG="${entry#*:}"
+          if [[ -z "$REPO" || -z "$TAG" || "$REPO" == "$entry" ]]; then
+            echo "❌ ERROR: Invalid image entry '$entry'. Expected 'repo:tag'."
+            exit 1
+          fi
+          # Accept tag with optional leading 'v' and optional prerelease/build metadata
+          if [[ ! "$TAG" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ && "$TAG" != "latest" ]]; then
+            echo "❌ ERROR: Invalid tag '$TAG' in entry '$entry'."
+            exit 1
+          fi
+
+          NEW_IMAGE="$ACR_FQDN/$REPO:$TAG"
+
+          # Find apps whose current image is from this repo in this registry.
+          mapfile -t APPS < <(az containerapp list \
+            --resource-group "$RG" \
+            --query "[?contains(properties.template.containers[0].image, '$ACR_FQDN/$REPO:')].name" \
+            -o tsv)
+
+          if [[ ${#APPS[@]} -eq 0 ]]; then
+            echo "⚠️  No container app in $RG currently running '$ACR_FQDN/$REPO:*' — skipping '$REPO'."
+            continue
+          fi
+
+          for app in "${APPS[@]}"; do
+            [[ -z "$app" ]] && continue
+            echo "🔄 Updating '$app' -> $NEW_IMAGE"
+            az containerapp update \
+              --name "$app" \
+              --resource-group "$RG" \
+              --image "$NEW_IMAGE" \
+              --only-show-errors >/dev/null
+            UPDATED+=("$app")
+            ANY=true
+          done
+        done <<< "$IMAGES"
+
+        if [[ "$ANY" != "true" ]]; then
+          echo "❌ ERROR: No container apps were updated. Check the registry, resource group, and image repo names."
+          exit 1
+        fi
+
+        UPDATED_CSV="$(IFS=,; echo "${UPDATED[*]}")"
+        echo "updated=$UPDATED_CSV" >> "$GITHUB_OUTPUT"
+        echo "✅ Updated: $UPDATED_CSV"
