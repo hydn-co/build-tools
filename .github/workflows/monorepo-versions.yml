@@ -1,0 +1,102 @@
+name: Monorepo Versions
+
+# Per-module/per-directory semantic versioning for multi-module monorepos (e.g.
+# hydn-co/substrate). Uses GitVersion v6's native monorepo support: each module
+# has its own <module>/GitVersion.yml combining `tag-prefix: '<module>/v'` (an
+# independent version stream) and `ignore.paths` (so only commits touching the
+# module's directory closure bump its version). Computes the module's semVer and,
+# optionally, creates+pushes the <module>/v<semVer> tag.
+#
+# Distinct from version.yml (single repo-root version) — do NOT fold this in there;
+# existing single-version consumers depend on version.yml's no-input contract.
+
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: "Module/directory name (e.g. 'mux'). Config: <module>/GitVersion.yml; tags: <module>/vX.Y.Z."
+        required: true
+        type: string
+      config-file-path:
+        description: "Override path to the module's GitVersion.yml. Default: <module>/GitVersion.yml."
+        required: false
+        type: string
+        default: ""
+      create-tag:
+        description: "When true, create+push the <module>/v<semVer> tag (idempotent)."
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      semVer:
+        description: "Computed semantic version for the module (no prefix, e.g. 1.0.21)"
+        value: ${{ jobs.version.outputs.semVer }}
+      majorMinorPatch:
+        description: "Major.Minor.Patch for the module"
+        value: ${{ jobs.version.outputs.majorMinorPatch }}
+      fullSemVer:
+        description: "Full semantic version including prerelease/metadata"
+        value: ${{ jobs.version.outputs.fullSemVer }}
+      tag:
+        description: "The created/existing <module>/v<semVer> tag (when create-tag=true)"
+        value: ${{ jobs.version.outputs.tag }}
+      created:
+        description: "Whether a NEW tag was pushed (true) vs it already existed / no-op (false). Empty when create-tag=false."
+        value: ${{ jobs.version.outputs.created }}
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Version ${{ inputs.module }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      semVer: ${{ steps.gv.outputs.semVer }}
+      majorMinorPatch: ${{ steps.gv.outputs.majorMinorPatch }}
+      fullSemVer: ${{ steps.gv.outputs.fullSemVer }}
+      tag: ${{ steps.tag.outputs.tag }}
+      created: ${{ steps.tag.outputs.created }}
+    steps:
+      - name: Checkout Full History
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4.5.0
+        with:
+          versionSpec: "6.7.x"
+
+      - name: Calculate Version
+        id: gv
+        uses: gittools/actions/gitversion/execute@v4.5.0
+        with:
+          # GitVersion 6 / gittools v4 dropped `useConfigFile`; passing
+          # configFilePath alone selects the per-module config.
+          configFilePath: ${{ inputs.config-file-path != '' && inputs.config-file-path || format('{0}/GitVersion.yml', inputs.module) }}
+
+      - name: Create module tag
+        id: tag
+        if: ${{ inputs.create-tag }}
+        uses: hydn-co/build-tools/.github/actions/create-tag@main
+        with:
+          semver: ${{ steps.gv.outputs.semVer }}
+          prefix: ${{ format('{0}/', inputs.module) }}
+
+      # Self-report this module's outcome into the run summary so callers (e.g. the
+      # substrate release matrix) surface published-vs-no-op per leg without anyone
+      # reading create-tag's step logs. `created` distinguishes a real publish from
+      # an idempotent no-op (existing tag).
+      - name: Summarize module release
+        if: ${{ inputs.create-tag }}
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          CREATED: ${{ steps.tag.outputs.created }}
+        run: |
+          set -euo pipefail
+          if [ "$CREATED" = "true" ]; then status="published ✅"; else status="no-op (tag already existed)"; fi
+          echo "### \`$MODULE\` → \`$TAG\` — $status" >> "$GITHUB_STEP_SUMMARY"

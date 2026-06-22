@@ -13,6 +13,10 @@ inputs:
     description: "Whether to push the tag to remote (true/false)"
     required: false
     default: "true"
+  prefix:
+    description: "Optional tag prefix prepended to the normalized vX.Y.Z (e.g. 'mux/' => mux/v1.2.3 for multi-module monorepo sub-module tags). Empty = plain vX.Y.Z (existing behavior)."
+    required: false
+    default: ""
 
 outputs:
   tag:
@@ -35,6 +39,7 @@ runs:
         SEMVER: ${{ inputs.semver }}
         MESSAGE: ${{ inputs.message }}
         PUSH: ${{ inputs.push }}
+        PREFIX: ${{ inputs.prefix }}
       run: |
         set -euo pipefail
 
@@ -59,6 +64,15 @@ runs:
         if [[ "$SEMVER" != v* ]]; then
           SEMVER="v$SEMVER"
           echo "📌 Normalized tag to $SEMVER"
+        fi
+
+        # Apply optional tag prefix (e.g. "mux/" => mux/v1.2.3) for multi-module
+        # monorepo sub-module tags. Done AFTER validation/normalization so every
+        # downstream tag operation (exists-check, create, push, outputs) uses the
+        # full prefixed tag. Empty prefix leaves the plain vX.Y.Z behavior intact.
+        if [[ -n "$PREFIX" ]]; then
+          SEMVER="${PREFIX}${SEMVER}"
+          echo "🏷️  Applied prefix; tag is now '$SEMVER'"
         fi
 
         # Determine tag message

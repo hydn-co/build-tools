@@ -1,0 +1,60 @@
+name: "Setup Go Private Modules"
+description: >
+  Mints a short-lived GitHub App installation token and configures git + GOPRIVATE
+  so the `go` command can fetch private github.com/<owner>/* modules (e.g. the
+  hydn-co/substrate infra layer). Run this AFTER actions/setup-go and BEFORE any
+  `go mod download` / `go build` / `golangci-lint` step. The minted token is also
+  exported as the GH_MODULES_TOKEN env var so a downstream Docker build can forward
+  it as a BuildKit secret (id=ghtoken,env=GH_MODULES_TOKEN) via build-app's
+  `build-secrets` input — never as a build-arg.
+
+inputs:
+  app-id:
+    description: "GitHub App ID (org secret, e.g. MESH_MODULES_APP_ID)"
+    required: true
+  private-key:
+    description: "GitHub App private key (org secret, e.g. MESH_MODULES_APP_KEY)"
+    required: true
+  owner:
+    description: "Organization that owns the private modules"
+    required: false
+    default: "hydn-co"
+  goprivate:
+    description: "GOPRIVATE glob for private modules (skips public proxy + checksum DB)"
+    required: false
+    default: "github.com/hydn-co/*"
+
+outputs:
+  token:
+    description: "The minted installation token (also exported as GH_MODULES_TOKEN)"
+    value: ${{ steps.app-token.outputs.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Mint installation token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+
+    - name: Configure git auth + GOPRIVATE
+      shell: bash
+      env:
+        TOKEN: ${{ steps.app-token.outputs.token }}
+        OWNER: ${{ inputs.owner }}
+        GOPRIVATE_GLOB: ${{ inputs.goprivate }}
+      run: |
+        set -euo pipefail
+        # Rewrite HTTPS clones of this org to use the installation token.
+        git config --global \
+          url."https://x-access-token:${TOKEN}@github.com/${OWNER}/".insteadOf \
+          "https://github.com/${OWNER}/"
+        # Mark these modules private (bypass proxy.golang.org + sum.golang.org).
+        # Set via env so it works regardless of whether `go` is installed yet and
+        # takes precedence over any `go env -w` value.
+        echo "GOPRIVATE=${GOPRIVATE_GLOB}" >> "$GITHUB_ENV"
+        # Expose for a downstream Docker BuildKit secret mount.
+        echo "GH_MODULES_TOKEN=${TOKEN}" >> "$GITHUB_ENV"
