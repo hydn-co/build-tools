@@ -30,13 +30,20 @@ inputs:
     description: "Maximum seconds to wait for arch images (0 = check once without retrying)"
     required: false
     default: "300"
+  latest:
+    description: "Also tag the multi-arch manifest as ':latest' (moving tag). 'true' to enable; default off."
+    required: false
+    default: "false"
 
 outputs:
   manifest:
+    description: "The multi-arch manifest reference tagged with the semver (e.g. ghcr.io/hydn-co/app:1.2.3)."
     value: ${{ steps.outputs.outputs.manifest }}
   manifest-branch:
+    description: "The branch-tagged manifest reference (e.g. ghcr.io/hydn-co/app:main); empty when no branch tag was pushed."
     value: ${{ steps.outputs.outputs.manifest_branch }}
   digest:
+    description: "The sha256 digest of the multi-arch manifest; empty when it could not be resolved."
     value: ${{ steps.outputs.outputs.digest }}
 
 runs:
@@ -122,6 +129,18 @@ runs:
         set -euo pipefail
         docker buildx imagetools create --tag "$IMAGE:$BRANCH_TAG" "$IMAGE:$SEMVER" \
           || echo "::warning::Failed to update branch tag $BRANCH_TAG"
+
+    - name: Push latest tag
+      if: inputs.latest == 'true'
+      shell: bash
+      continue-on-error: true
+      env:
+        IMAGE: ${{ steps.prepare.outputs.image }}
+        SEMVER: ${{ steps.prepare.outputs.semver }}
+      run: |
+        set -euo pipefail
+        docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$SEMVER" \
+          || echo "::warning::Failed to update latest tag"
 
     - name: Set outputs
       id: outputs

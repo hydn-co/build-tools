@@ -41,7 +41,7 @@ Add one step **after** `actions/setup-go` and **before** any `go mod download`,
 
 - uses: hydn-co/build-tools/.github/actions/setup-go-private@main
   with:
-    app-id: ${{ secrets.MESH_MODULES_APP_ID }}
+    client-id: ${{ secrets.MESH_MODULES_APP_CLIENT_ID }}
     private-key: ${{ secrets.MESH_MODULES_APP_KEY }}
 
 - run: go mod download
@@ -55,7 +55,7 @@ image build via `build-app`'s existing `build-secrets` input:
 ```yaml
 - uses: hydn-co/build-tools/.github/actions/setup-go-private@main
   with:
-    app-id: ${{ secrets.MESH_MODULES_APP_ID }}
+    client-id: ${{ secrets.MESH_MODULES_APP_CLIENT_ID }}
     private-key: ${{ secrets.MESH_MODULES_APP_KEY }}
 
 - uses: hydn-co/build-tools/.github/actions/build-app@main
