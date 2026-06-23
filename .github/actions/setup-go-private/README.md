@@ -24,7 +24,7 @@ points git at it, and sets `GOPRIVATE` (which bypasses `proxy.golang.org` and
    minimum: `substrate` + every repo that consumes a private module).
 3. **Store org-level Actions secrets** (Org → Settings → Secrets and variables →
    Actions → New organization secret), visible to all private repos:
-   - `MESH_MODULES_APP_ID` = the App's numeric App ID.
+   - `MESH_MODULES_APP_CLIENT_ID` = the App's Client ID (shown on the App's settings page).
    - `MESH_MODULES_APP_KEY` = the full contents of the `.pem` private key.
 
 The installation token is auto-rotating (≈1h), centrally revocable (uninstall the

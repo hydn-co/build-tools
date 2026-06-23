@@ -9,8 +9,8 @@ description: >
   `build-secrets` input — never as a build-arg.
 
 inputs:
-  app-id:
-    description: "GitHub App ID (org secret, e.g. MESH_MODULES_APP_ID)"
+  client-id:
+    description: "GitHub App Client ID (org secret, e.g. MESH_MODULES_APP_CLIENT_ID)"
     required: true
   private-key:
     description: "GitHub App private key (org secret, e.g. MESH_MODULES_APP_KEY)"
@@ -34,9 +34,9 @@ runs:
   steps:
     - name: Mint installation token
       id: app-token
-      uses: actions/create-github-app-token@v1
+      uses: actions/create-github-app-token@v3.2.0
       with:
-        app-id: ${{ inputs.app-id }}
+        client-id: ${{ inputs.client-id }}
         private-key: ${{ inputs.private-key }}
         owner: ${{ inputs.owner }}
 
