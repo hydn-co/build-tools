@@ -49,6 +49,16 @@ jobs:
           cache-dependency-path: "**/go.sum"
           check-latest: false
 
+      # Connectors now depend on private modules (hydn-co/mesh-sdk + substrate). Mint a
+      # GitHub App token and configure git insteadOf + GOPRIVATE before fetching modules.
+      # NOTE: this reusable workflow has no `secrets:` block, so callers MUST invoke it with
+      # `secrets: inherit` for these org secrets to resolve (see a connector's release.yml).
+      - name: Setup private modules
+        uses: hydn-co/build-tools/.github/actions/setup-go-private@main
+        with:
+          client-id: ${{ secrets.MESH_MODULES_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MESH_MODULES_APP_KEY }}
+
       - name: Download modules
         shell: bash
         run: go mod download
