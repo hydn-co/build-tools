@@ -1,5 +1,5 @@
 name: "Update Container App Image"
-description: "Rolls one or more Azure Container Apps to a new image without re-running Bicep. Existing environment variables, scale and probes are preserved."
+description: "Rolls one or more Azure Container Apps to a new image without re-running Bicep. Existing environment variables, scale and probes are preserved — except OTel/Datadog version tags (OTEL_SERVICE_VERSION, DD_VERSION, OTEL_RESOURCE_ATTRIBUTES' service.version), which are synced to the rolled image tag so they don't drift from the running binary."
 
 inputs:
   environment:
@@ -94,11 +94,44 @@ runs:
           for app in "${APPS[@]}"; do
             [[ -z "$app" ]] && continue
             echo "🔄 Updating '$app' -> $NEW_IMAGE"
-            az containerapp update \
-              --name "$app" \
-              --resource-group "$RG" \
-              --image "$NEW_IMAGE" \
-              --only-show-errors >/dev/null
+
+            # Keep version env coherent with the rolled image tag. An image-only
+            # roll preserves env vars, so OTel/Datadog version tags otherwise stay
+            # pinned to the last full (Bicep) deploy and drift from the running
+            # binary's actual version. Only patch vars the app already sets, so
+            # this is a no-op for apps that don't carry version env.
+            ENV_ARGS=()
+            for v in OTEL_SERVICE_VERSION DD_VERSION; do
+              cur=$(az containerapp show --name "$app" --resource-group "$RG" \
+                --query "properties.template.containers[0].env[?name=='$v'].value | [0]" \
+                -o tsv 2>/dev/null || true)
+              [[ -n "$cur" && "$cur" != "None" ]] && ENV_ARGS+=("$v=$TAG")
+            done
+            # OTEL_RESOURCE_ATTRIBUTES carries service.version among other attrs;
+            # rewrite only that field and preserve the rest.
+            ora=$(az containerapp show --name "$app" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='OTEL_RESOURCE_ATTRIBUTES'].value | [0]" \
+              -o tsv 2>/dev/null || true)
+            if [[ -n "$ora" && "$ora" != "None" && "$ora" == *service.version=* ]]; then
+              ora_new=$(printf '%s' "$ora" | sed "s|service\.version=[^,]*|service.version=$TAG|")
+              ENV_ARGS+=("OTEL_RESOURCE_ATTRIBUTES=$ora_new")
+            fi
+
+            if [[ ${#ENV_ARGS[@]} -gt 0 ]]; then
+              az containerapp update \
+                --name "$app" \
+                --resource-group "$RG" \
+                --image "$NEW_IMAGE" \
+                --set-env-vars "${ENV_ARGS[@]}" \
+                --only-show-errors >/dev/null
+              echo "   ↳ synced version env -> $TAG (${#ENV_ARGS[@]} var(s))"
+            else
+              az containerapp update \
+                --name "$app" \
+                --resource-group "$RG" \
+                --image "$NEW_IMAGE" \
+                --only-show-errors >/dev/null
+            fi
             UPDATED+=("$app")
             ANY=true
           done
