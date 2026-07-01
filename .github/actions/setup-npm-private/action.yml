@@ -1,0 +1,48 @@
+name: "Setup Private npm Packages"
+description: >
+  Mints a short-lived hydn-substrate-read GitHub App installation token
+  (Packages: read) for installing private @hydn-co/* packages from GitHub Packages
+  (the substrate fetch/fetch-gen forks). Run this AFTER actions/setup-node (which
+  writes the ~/.npmrc `${NODE_AUTH_TOKEN}` reference). Set the step that needs to
+  read private packages to `NODE_AUTH_TOKEN: ${{ steps.<id>.outputs.token }}`. The
+  token is also exported as GH_PACKAGES_TOKEN so a downstream Docker build can
+  forward it as a BuildKit secret (id=npmtoken,env=GH_PACKAGES_TOKEN) — never as a
+  build-arg. A read token deliberately can't publish; keep publish steps on
+  GITHUB_TOKEN.
+
+inputs:
+  client-id:
+    description: "GitHub App Client ID (org secret, e.g. MESH_MODULES_APP_CLIENT_ID)"
+    required: true
+  private-key:
+    description: "GitHub App private key (org secret, e.g. MESH_MODULES_APP_KEY)"
+    required: true
+  owner:
+    description: "Organization that owns the packages"
+    required: false
+    default: "hydn-co"
+
+outputs:
+  token:
+    description: "The minted installation token (also exported as GH_PACKAGES_TOKEN)"
+    value: ${{ steps.app-token.outputs.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Mint installation token
+      id: app-token
+      uses: actions/create-github-app-token@v3.2.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+
+    - name: Export token for Docker BuildKit
+      shell: bash
+      env:
+        TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::${TOKEN}"
+        echo "GH_PACKAGES_TOKEN=${TOKEN}" >> "$GITHUB_ENV"
