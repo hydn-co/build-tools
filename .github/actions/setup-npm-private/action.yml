@@ -3,12 +3,11 @@ description: >
   Mints a short-lived hydn-substrate-read GitHub App installation token
   (Packages: read) for installing private @hydn-co/* packages from GitHub Packages
   (the substrate fetch/fetch-gen forks). Run this AFTER actions/setup-node (which
-  writes the ~/.npmrc `${NODE_AUTH_TOKEN}` reference). Set the step that needs to
-  read private packages to `NODE_AUTH_TOKEN: ${{ steps.<id>.outputs.token }}`. The
-  token is also exported as GH_PACKAGES_TOKEN so a downstream Docker build can
-  forward it as a BuildKit secret (id=npmtoken,env=GH_PACKAGES_TOKEN) — never as a
-  build-arg. A read token deliberately can't publish; keep publish steps on
-  GITHUB_TOKEN.
+  writes the ~/.npmrc NODE_AUTH_TOKEN reference); then point the reading step's
+  NODE_AUTH_TOKEN at this action's token output (see README). The token is also
+  exported as GH_PACKAGES_TOKEN so a downstream Docker build can forward it as a
+  BuildKit secret (id=npmtoken,env=GH_PACKAGES_TOKEN) — never as a build-arg. A read
+  token deliberately can't publish; keep publish steps on GITHUB_TOKEN.
 
 inputs:
   client-id:
