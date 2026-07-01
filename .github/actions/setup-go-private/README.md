@@ -16,8 +16,10 @@ points git at it, and sets `GOPRIVATE` (which bypasses `proxy.golang.org` and
 ## One-time org setup (manual, GitHub UI)
 
 1. **Create a GitHub App** (Org → Settings → Developer settings → GitHub Apps → New):
-   - Name: `mesh-modules-read`
-   - Repository permissions: **Contents: Read-only** (nothing else).
+   - Name: `hydn-substrate-read`
+   - Repository permissions: **Contents: Read-only** (Go modules). The same App
+     also carries **Packages: Read** for [`setup-npm-private`](../setup-npm-private);
+     this action only needs Contents.
    - Where can this app be installed: **Only this account**.
    - Generate a **private key** (downloads a `.pem`).
 2. **Install the App** on the `hydn-co` org, scoped to **All repositories** (or at
