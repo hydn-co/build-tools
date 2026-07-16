@@ -1,0 +1,109 @@
+name: Entity Contract Check
+
+# Reusable workflow for mesh-connector repositories. Verifies that
+# internal/collectors/entity_contract_test.go exists and contains a
+# When{X}Collector...Runs contract test for every *_entity_collector
+# feature declared in the connector manifest. Static check only — the
+# tests themselves run in the caller's regular `go test ./...` job.
+#
+# Usage (in a connector's ci.yml):
+#
+#   jobs:
+#     entity-contract:
+#       uses: hydn-co/build-tools/.github/workflows/entity-contract-check.yml@main
+#
+# No secrets or Go toolchain required.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  entity-contract:
+    name: Entity contract coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify entity contract test coverage
+        shell: bash
+        run: |
+          python3 - <<'EOF'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          manifest_path = next(
+              (p for p in (pathlib.Path("cmd/manifest.json"), pathlib.Path("manifest.json")) if p.exists()),
+              None,
+          )
+          if manifest_path is None:
+              sys.exit("::error::no cmd/manifest.json or manifest.json found; is this a mesh connector repository?")
+
+          manifest = json.loads(manifest_path.read_text())
+          prefix = manifest["name"].removeprefix("mesh-").replace("-", "_") + "_"
+
+          def middle(name):
+              # jira_user_entity_collector -> user, collect_users -> users,
+              # slack_channels_collector -> channels
+              for suffix in ("_entity_collector", "_collector"):
+                  if name.endswith(suffix):
+                      name = name.removesuffix(suffix)
+                      break
+              return name.removeprefix(prefix).removeprefix("collect_")
+
+          # Entity collectors are type=collector without activity resume semantics;
+          # this holds across all connector manifests regardless of naming era.
+          collectors = [
+              middle(name)
+              for name, feature in manifest["features"].items()
+              if feature.get("type") == "collector"
+              and feature.get("resume_behavior") != "last_activity"
+          ]
+
+          if not collectors:
+              print(f"OK: {manifest_path} declares no entity collector features; nothing to check")
+              sys.exit(0)
+
+          test_file = pathlib.Path("internal/collectors/entity_contract_test.go")
+          if not test_file.exists():
+              sys.exit(
+                  f"::error::{test_file} is missing but {manifest_path} declares "
+                  f"{len(collectors)} entity collector feature(s); every connector with entity "
+                  "collectors must ship entity contract tests (see mesh-utilities "
+                  "skills/mesh-connector-bootstrap, section 'Entity emission contract tests')"
+              )
+
+          # Contract tests follow TestShould...When{X}Collector...Runs. Compare case-insensitively
+          # with underscores removed so acronym casing (Iam vs IAM) never matters, and tolerate
+          # singular test names for plural feature names (collect_users -> WhenUserCollectorRuns).
+          tests = test_file.read_text().lower()
+
+          def variants(m):
+              v = {m}
+              if m.endswith("ies"):
+                  v.add(m[:-3] + "y")
+              if m.endswith("s"):
+                  v.add(m[:-1])
+              return v
+
+          missing = [
+              c for c in collectors
+              if not any(
+                  re.search(rf"when{v.replace('_', '')}collector\w*runs", tests)
+                  for v in variants(c)
+              )
+          ]
+          if missing:
+              sys.exit(
+                  f"::error::entity collector feature(s) without a When{{X}}Collector...Runs "
+                  f"contract test in {test_file}: {', '.join(sorted(missing))}"
+              )
+
+          print(f"OK: all {len(collectors)} entity collector feature(s) covered by {test_file}")
+          EOF
