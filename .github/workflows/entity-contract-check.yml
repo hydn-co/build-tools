@@ -97,8 +97,8 @@ jobs:
               sys.exit(
                   f"::error::{test_file} is missing but {manifest_path} declares "
                   f"{len(collectors)} entity collector feature(s); every connector with entity "
-                  "collectors must ship entity contract tests (see mesh-utilities "
-                  "skills/mesh-connector-bootstrap, section 'Entity emission contract tests')"
+                  "collectors must ship entity contract tests (see the connector bootstrap "
+                  "guide, section 'Entity emission contract tests')"
               )
 
           # Contract tests follow TestShould...When{X}Collector...Runs. Compare case-insensitively
