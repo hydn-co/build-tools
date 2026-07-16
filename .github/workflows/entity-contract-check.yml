@@ -2,17 +2,22 @@ name: Entity Contract Check
 
 # Reusable workflow for mesh-connector repositories. Verifies that
 # internal/collectors/entity_contract_test.go exists and contains a
-# When{X}Collector...Runs contract test for every *_entity_collector
-# feature declared in the connector manifest. Static check only — the
-# tests themselves run in the caller's regular `go test ./...` job.
+# When{X}Collector...Runs contract test for every entity collector
+# feature declared in the connector manifest. The coverage check is
+# static — the tests themselves run in the caller's regular
+# `go test ./...` job — but the manifest is gitignored in connector
+# repos, so it is regenerated here via `go run ./cmd/... -describe`,
+# which needs Go plus private-module auth.
 #
 # Usage (in a connector's ci.yml):
 #
 #   jobs:
 #     entity-contract:
 #       uses: hydn-co/build-tools/.github/workflows/entity-contract-check.yml@main
+#       secrets: inherit
 #
-# No secrets or Go toolchain required.
+# `secrets: inherit` is required so setup-go-private can mint a token
+# from the org's MESH_MODULES_APP_* secrets.
 
 on:
   workflow_call:
@@ -24,10 +29,26 @@ jobs:
   entity-contract:
     name: Entity contract coverage
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "**/go.sum"
+
+      - name: Setup private modules
+        uses: hydn-co/build-tools/.github/actions/setup-go-private@main
+        with:
+          client-id: ${{ secrets.MESH_MODULES_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MESH_MODULES_APP_KEY }}
+
+      - name: Generate manifest
+        run: go run ./cmd/... -describe
 
       - name: Verify entity contract test coverage
         shell: bash
@@ -38,12 +59,13 @@ jobs:
           import re
           import sys
 
+          # -describe writes manifest.json at the repo root (gitignored)
           manifest_path = next(
-              (p for p in (pathlib.Path("cmd/manifest.json"), pathlib.Path("manifest.json")) if p.exists()),
+              (p for p in (pathlib.Path("manifest.json"), pathlib.Path("cmd/manifest.json")) if p.exists()),
               None,
           )
           if manifest_path is None:
-              sys.exit("::error::no cmd/manifest.json or manifest.json found; is this a mesh connector repository?")
+              sys.exit("::error::no manifest.json found; did the Generate manifest step run?")
 
           manifest = json.loads(manifest_path.read_text())
           prefix = manifest["name"].removeprefix("mesh-").replace("-", "_") + "_"
