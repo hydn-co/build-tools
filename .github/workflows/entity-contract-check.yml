@@ -79,16 +79,24 @@ jobs:
                       break
               return name.removeprefix(prefix).removeprefix("collect_")
 
-          # Entity collectors are full-snapshot: type=collector with resume_behavior
-          # "none". Any resumable behavior (last_activity, cursor, or future ones)
-          # marks an activity collector, which this check does not cover — matching
-          # the mesh-sdk convention that entity collectors and actions are "none"
-          # and only activity collectors resume.
+          # An entity collector is a collector that does NOT emit to the shared "activity"
+          # space. Newer manifests declare per-feature "spaces"; when present, activity-space
+          # membership is the reliable signal, because resume_behavior alone misclassifies a
+          # stateless snapshot activity collector (it emits to "activity" but resumes "none").
+          # Fall back to the resume_behavior heuristic for older manifests generated before
+          # per-feature spaces existed (those connectors have no stateless activity collectors).
+          def is_entity_collector(feature):
+              if feature.get("type") != "collector":
+                  return False
+              feature_spaces = feature.get("spaces")
+              if feature_spaces is not None:
+                  return "activity" not in feature_spaces
+              return feature.get("resume_behavior") == "none"
+
           collectors = [
               middle(name)
               for name, feature in manifest["features"].items()
-              if feature.get("type") == "collector"
-              and feature.get("resume_behavior") == "none"
+              if is_entity_collector(feature)
           ]
 
           if not collectors:
