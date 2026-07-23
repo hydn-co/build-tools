@@ -124,6 +124,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # Builds fetch private modules (hydn-co/mesh-sdk + substrate) whenever the module
+      # cache is cold or stale, so the build job needs the same auth as Validate; a warm
+      # cache merely masks its absence.
+      - name: Setup private modules
+        uses: hydn-co/build-tools/.github/actions/setup-go-private@main
+        with:
+          client-id: ${{ secrets.MESH_MODULES_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MESH_MODULES_APP_KEY }}
+
       - uses: hydn-co/build-tools/.github/actions/build-connector@main
         id: binary
         with:
