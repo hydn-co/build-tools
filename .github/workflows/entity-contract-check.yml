@@ -79,13 +79,16 @@ jobs:
                       break
               return name.removeprefix(prefix).removeprefix("collect_")
 
-          # Entity collectors are type=collector without activity resume semantics;
-          # this holds across all connector manifests regardless of naming era.
+          # Entity collectors are full-snapshot: type=collector with resume_behavior
+          # "none". Any resumable behavior (last_activity, cursor, or future ones)
+          # marks an activity collector, which this check does not cover — matching
+          # the mesh-sdk convention that entity collectors and actions are "none"
+          # and only activity collectors resume.
           collectors = [
               middle(name)
               for name, feature in manifest["features"].items()
               if feature.get("type") == "collector"
-              and feature.get("resume_behavior") != "last_activity"
+              and feature.get("resume_behavior") == "none"
           ]
 
           if not collectors:
