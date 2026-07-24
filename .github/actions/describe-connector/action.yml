@@ -1,17 +1,36 @@
 name: Describe connector
 description: Runs go run ./cmd/... -describe (connector manifest / metadata validation).
 
+inputs:
+  alpha-functions:
+    description: >-
+      When 'true', build the manifest with alpha (unreleased) functions enabled via
+      MESH_CONNECTOR_ALPHA_FUNCTIONS_ENABLED. Refused on the 'main' branch; use develop or a feature branch.
+    default: "false"
+
 runs:
   using: composite
   steps:
     - name: Describe
       shell: bash
+      env:
+        ALPHA_FUNCTIONS: ${{ inputs.alpha-functions }}
+        REF_NAME: ${{ github.ref_name }}
       run: |
         set -euo pipefail
 
         if [[ ! -f go.mod ]]; then
           echo "::error::go.mod not found in ${GITHUB_WORKSPACE:-the workspace root}. describe-connector expects a Go module at the repository root."
           exit 1
+        fi
+
+        if [[ "$ALPHA_FUNCTIONS" == "true" ]]; then
+          if [[ "$REF_NAME" == "main" ]]; then
+            echo "::error::alpha functions cannot be released from 'main'; use develop or a feature branch."
+            exit 1
+          fi
+          echo "::notice::Building manifest with alpha functions enabled (ref '${REF_NAME}')."
+          export MESH_CONNECTOR_ALPHA_FUNCTIONS_ENABLED=true
         fi
 
         go run ./cmd/... -describe

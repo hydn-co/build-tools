@@ -2,6 +2,11 @@ name: Connector Release
 
 on:
   workflow_call:
+    inputs:
+      alpha-functions:
+        description: "Include alpha (unreleased) connector functions in the manifest. Refused on 'main'; use develop or a feature branch."
+        type: boolean
+        default: false
     outputs:
       version:
         description: "Version computed from GitVersion"
@@ -64,6 +69,8 @@ jobs:
         run: go mod download
 
       - uses: hydn-co/build-tools/.github/actions/describe-connector@main
+        with:
+          alpha-functions: ${{ inputs.alpha-functions }}
 
       - uses: hydn-co/build-tools/.github/actions/inject-connector-manifest-version@main
         with:
