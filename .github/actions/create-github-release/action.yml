@@ -1,6 +1,7 @@
 name: Create GitHub release
 description: >-
-  Runs gh release create with --generate-notes. Requires GH_TOKEN with contents write for releases.
+  Runs gh release create with --generate-notes, tagging the commit the workflow is running on.
+  Requires GH_TOKEN with contents write for releases.
 
 inputs:
   tag:
@@ -12,6 +13,13 @@ inputs:
   files:
     description: "File glob(s) passed to gh release create (e.g. dist/*)"
     required: true
+  target:
+    description: >-
+      Commit-ish the new tag is created at. Defaults to GITHUB_SHA (the commit the workflow is
+      running on), so the tag always points at the code that produced the assets. Only override
+      when a release must be cut at a different commit than the one checked out.
+    required: false
+    default: ""
 
 outputs:
   url:
@@ -28,6 +36,7 @@ runs:
         TAG: ${{ inputs.tag }}
         TITLE: ${{ inputs.title }}
         FILES: ${{ inputs.files }}
+        TARGET: ${{ inputs.target }}
       run: |
         set -euo pipefail
 
@@ -43,6 +52,14 @@ runs:
           echo "::error::create-github-release: files input is empty."
           exit 1
         fi
+        # Resolve in bash rather than an input default so this never depends on expression
+        # evaluation inside a composite action's `default:`.
+        TARGET="${TARGET:-${GITHUB_SHA:-}}"
+        if [[ -z "${TARGET}" ]]; then
+          echo "::error::create-github-release: target is empty and GITHUB_SHA is unset."
+          exit 1
+        fi
+        echo "Tagging ${TAG} at ${TARGET}"
 
         shopt -s nullglob
         set -- ${FILES}
@@ -52,7 +69,11 @@ runs:
         fi
 
         set +e
-        create_out=$(gh release create "$TAG" --title "$TITLE" --generate-notes "$@" 2>&1)
+        # --target pins the new tag to this run's commit. Without it gh defaults to the
+        # repository's default branch, which silently detaches the tag from the assets in
+        # any repo that releases from a non-default branch (e.g. default main, releases cut
+        # from develop, or the reverse).
+        create_out=$(gh release create "$TAG" --target "$TARGET" --title "$TITLE" --generate-notes "$@" 2>&1)
         create_ec=$?
         set -e
         if [[ "$create_ec" -ne 0 ]]; then
