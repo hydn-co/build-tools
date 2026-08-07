@@ -27,6 +27,17 @@ on:
         required: false
         type: boolean
         default: false
+      ref:
+        description: >-
+          Commit or ref to version and tag. Blank (default) checks out the caller's
+          triggering commit, which is the existing behaviour. Set it when the caller
+          creates a commit that must itself be tagged — a monorepo release that first
+          rewrites intra-repo requires to the versions it is about to publish cannot
+          otherwise tag the commit carrying them, because this workflow's own checkout
+          would land on the pre-rewrite commit.
+        required: false
+        type: string
+        default: ""
     outputs:
       semVer:
         description: "Computed semantic version for the module (no prefix, e.g. 1.0.21)"
@@ -59,10 +70,18 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       created: ${{ steps.tag.outputs.created }}
     steps:
+      # An empty `ref` is checkout's own default, so unset behaves exactly as before.
+      # GitVersion and create-tag both read the resulting HEAD, so this input decides
+      # which commit gets versioned AND which one gets tagged — they cannot diverge.
       - name: Checkout Full History
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # Explicit because a SHA `ref` narrows what checkout fetches, and GitVersion
+          # silently falls back to 0.0.1 with no base tag to read — a wrong version is
+          # worse than a failed run.
+          fetch-tags: true
+          ref: ${{ inputs.ref }}
 
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@v4.7.0
