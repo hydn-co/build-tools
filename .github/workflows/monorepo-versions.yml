@@ -83,6 +83,35 @@ jobs:
           fetch-tags: true
           ref: ${{ inputs.ref }}
 
+      # GitVersion does not fail when it cannot find a base tag — it returns 0.0.1. With
+      # create-tag that publishes a wrong version silently, which is worse than a broken
+      # run: consumers resolve it, and nothing points at the mistake afterwards. So assert
+      # the precondition instead of trusting the output.
+      #
+      # Checking for a visible tag covers both ways this happens: a module that was never
+      # seeded, and tags that exist but were not fetched (a narrow checkout, e.g. a SHA
+      # `ref` without fetch-tags). The second is invisible in the version number alone.
+      #
+      # Only when actually cutting a tag. Callers that pass create-tag: false use semVer
+      # for something else and can legitimately have no tag at all -- substrate's
+      # fazure-image.yml computes a version for a container image tag, and fazure has no
+      # fazure/v* tag by design because it releases as an image, not a go module. Failing
+      # those would break a working release to guard a risk they do not carry: no git tag
+      # is cut, so nothing enters a module graph and no consumer resolves it.
+      - name: Require a base tag
+        if: ${{ inputs.create-tag }}
+        shell: bash
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+          set -euo pipefail
+          base="$(git tag --list "${MODULE}/v*" --sort=-v:refname | head -n1)"
+          if [ -z "$base" ]; then
+            echo "::error::No ${MODULE}/v* tag is visible, so GitVersion has no base and would return 0.0.1 — publishing a wrong version rather than failing. Either seed the first tag (git tag ${MODULE}/v0.1.0 && git push origin ${MODULE}/v0.1.0), or check that tags reached this checkout (fetch-tags / fetch-depth)."
+            exit 1
+          fi
+          echo "base tag: $base"
+
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@v4.7.0
         with:
