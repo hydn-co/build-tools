@@ -91,7 +91,15 @@ jobs:
       # Checking for a visible tag covers both ways this happens: a module that was never
       # seeded, and tags that exist but were not fetched (a narrow checkout, e.g. a SHA
       # `ref` without fetch-tags). The second is invisible in the version number alone.
+      #
+      # Only when actually cutting a tag. Callers that pass create-tag: false use semVer
+      # for something else and can legitimately have no tag at all -- substrate's
+      # fazure-image.yml computes a version for a container image tag, and fazure has no
+      # fazure/v* tag by design because it releases as an image, not a go module. Failing
+      # those would break a working release to guard a risk they do not carry: no git tag
+      # is cut, so nothing enters a module graph and no consumer resolves it.
       - name: Require a base tag
+        if: ${{ inputs.create-tag }}
         shell: bash
         env:
           MODULE: ${{ inputs.module }}
