@@ -103,8 +103,12 @@ jobs:
               print(f"OK: {manifest_path} declares no entity collector features; nothing to check")
               sys.exit(0)
 
-          test_file = pathlib.Path("internal/collectors/entity_contract_test.go")
-          if not test_file.exists():
+          # Collectors are flat under internal/collectors in most connectors, but some
+          # group them by kind (internal/collectors/entities, .../activities). Search
+          # the tree so layout does not decide whether the contract is enforced.
+          test_files = sorted(pathlib.Path("internal/collectors").rglob("entity_contract_test.go"))
+          test_file = ", ".join(str(f) for f in test_files) or "internal/collectors/entity_contract_test.go"
+          if not test_files:
               sys.exit(
                   f"::error::{test_file} is missing but {manifest_path} declares "
                   f"{len(collectors)} entity collector feature(s); every connector with entity "
@@ -115,7 +119,7 @@ jobs:
           # Contract tests follow TestShould...When{X}Collector...Runs. Compare case-insensitively
           # with underscores removed so acronym casing (Iam vs IAM) never matters, and tolerate
           # singular test names for plural feature names (collect_users -> WhenUserCollectorRuns).
-          tests = test_file.read_text().lower()
+          tests = "\n".join(f.read_text() for f in test_files).lower()
 
           def variants(m):
               v = {m}
