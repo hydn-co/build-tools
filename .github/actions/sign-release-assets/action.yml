@@ -1,0 +1,94 @@
+name: Sign release assets
+description: >-
+  In working-directory, writes a detached Ed25519 signature (<file>.sig) for each
+  regular file matching asset-prefix* (skipping existing .sha256/.sig sidecars),
+  using mesh-core's mesh-artifact-sign and the release signing key (HYD-1645).
+  agentd/the agent verify these signatures against a public key pinned into their
+  build. Fails if the signing key is absent or no files match — a release must
+  never publish unsigned binaries, which downstream agents would refuse.
+
+inputs:
+  working-directory:
+    description: Directory containing release assets (relative to workspace)
+    required: false
+    default: dist
+  asset-prefix:
+    description: "Filename prefix glob anchor (e.g. myapp-1.2.3-); signs asset-prefix* (minus sidecars)"
+    required: true
+  signer-version:
+    description: >-
+      mesh-core ref (release tag or commit SHA) that provides cmd/mesh-artifact-sign.
+      PIN this to a specific tag/commit for production releases; a moving branch would
+      let the signer's source change without review.
+    required: false
+    default: main
+  go-version:
+    description: Go toolchain version used to build the signer
+    required: false
+    default: "1.25.6"
+  client-id:
+    description: "GitHub App Client ID for private-module access (org secret MESH_MODULES_APP_CLIENT_ID)"
+    required: true
+  private-key:
+    description: "GitHub App private key for private-module access (org secret MESH_MODULES_APP_KEY)"
+    required: true
+
+# The Ed25519 signing private key is read from the MESH_ARTIFACT_SIGNING_KEY_PEM
+# environment variable, which the calling workflow must set from a secret. It is
+# deliberately not an input so it is never rendered into the composite's step logs.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - name: Setup private modules
+      uses: hydn-co/build-tools/.github/actions/setup-go-private@main
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+
+    - name: Sign assets
+      shell: bash
+      env:
+        WORKDIR: ${{ inputs.working-directory }}
+        ASSET_PREFIX: ${{ inputs.asset-prefix }}
+        SIGNER_VERSION: ${{ inputs.signer-version }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+
+        if [[ -z "${MESH_ARTIFACT_SIGNING_KEY_PEM:-}" ]]; then
+          echo "::error::MESH_ARTIFACT_SIGNING_KEY_PEM is not set; refusing to publish unsigned release assets."
+          exit 1
+        fi
+
+        # Build the signer once from mesh-core (private module; auth configured above).
+        GOBIN="${RUNNER_TEMP}" go install "github.com/hydn-co/mesh-core/cmd/mesh-artifact-sign@${SIGNER_VERSION}"
+        signer="${RUNNER_TEMP}/mesh-artifact-sign"
+
+        if [[ ! -d "$WORKDIR" ]]; then
+          echo "::error::working-directory is not a directory or does not exist: '${WORKDIR}'."
+          exit 1
+        fi
+        cd "$WORKDIR"
+
+        COUNT=0
+        for file in ${ASSET_PREFIX}*; do
+          [[ -f "$file" ]] || continue
+          case "$file" in
+            *.sha256 | *.sig) continue ;;
+          esac
+          "$signer" sign -in "$file"
+          COUNT=$((COUNT + 1))
+        done
+
+        if [[ "$COUNT" -eq 0 ]]; then
+          echo "::error::No release assets matched '${ASSET_PREFIX}*' to sign in ${WORKDIR}/."
+          exit 1
+        fi
+
+        echo "Signed ${COUNT} asset(s) in ${WORKDIR}/."
