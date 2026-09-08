@@ -111,7 +111,12 @@ runs:
         BUILD_SECRETS: ${{ inputs.build-secrets }}
       run: |
         set -euo pipefail
-        ARGS=(--file "$DOCKERFILE" --platform "linux/$ARCH" --build-arg "SEMVER=$SEMVER" --tag "$IMAGE_REF")
+        # provenance/sbom disabled: buildx's default attestation manifest, attached
+        # alongside the image's manifest list, gets "denied: permission_denied:
+        # write_package" from GHCR on some pushes even though the plain image
+        # layers/config/manifest push fine — the manifest-list-plus-attestation
+        # combination is what GHCR rejects. Not needed for internal deploys.
+        ARGS=(--file "$DOCKERFILE" --platform "linux/$ARCH" --build-arg "SEMVER=$SEMVER" --tag "$IMAGE_REF" --provenance=false --sbom=false)
         if [ -n "${BRANCH_TAG:-}" ]; then
           ARGS+=(--tag "$IMAGE:$BRANCH_TAG")
           ARGS+=(--cache-from "type=registry,ref=$IMAGE:$BRANCH_TAG")
