@@ -41,6 +41,25 @@ inputs:
       parameters must be declared in the template.
     required: false
     default: ""
+  client-id:
+    description: |
+      Azure AD app (client) ID used for OIDC login. When set together with
+      tenant-id and subscription-id, the action re-authenticates periodically
+      while polling a long-running deployment, so a slow deployment (e.g. cert
+      issuance) can't outlive the Azure access token obtained by the workflow's
+      initial azure/login step. Requires the calling job to have
+      `permissions: id-token: write`. Leave unset to keep the previous
+      single blocking `az deployment sub create` behavior.
+    required: false
+    default: ""
+  tenant-id:
+    description: "Azure AD tenant ID, used for periodic re-authentication (see client-id)."
+    required: false
+    default: ""
+  subscription-id:
+    description: "Azure subscription ID, used for periodic re-authentication (see client-id)."
+    required: false
+    default: ""
 
 outputs:
   deployment-name:
@@ -69,6 +88,9 @@ runs:
         SEMVER: ${{ inputs.semver }}
         VERIFY_DEPLOYMENT: ${{ inputs.verify-deployment }}
         EXTRA_PARAMETERS: ${{ inputs.extra-parameters }}
+        REAUTH_CLIENT_ID: ${{ inputs.client-id }}
+        REAUTH_TENANT_ID: ${{ inputs.tenant-id }}
+        REAUTH_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
       run: |
         set -euo pipefail
 
@@ -152,6 +174,38 @@ runs:
           [[ ${#EXTRA_ARGS[@]} -gt 0 ]] && echo "  Extra params: ${EXTRA_ARGS[*]}"
         fi
 
+        # Re-authentication helper: a long-running deployment (e.g. cert issuance)
+        # can outlive the Azure access token obtained by the workflow's initial
+        # azure/login step, since that token was minted from a short-lived GitHub
+        # OIDC assertion that az CLI cannot silently refresh on its own
+        # (AADSTS700024: "Client assertion is not within its valid time range").
+        # When re-auth params are provided, fetch a *fresh* OIDC token from GitHub
+        # and re-login with it before the cached token can expire.
+        REAUTH_ENABLED=false
+        if [[ -n "${REAUTH_CLIENT_ID:-}" && -n "${REAUTH_TENANT_ID:-}" && -n "${REAUTH_SUBSCRIPTION_ID:-}" ]]; then
+          REAUTH_ENABLED=true
+        fi
+
+        reauth() {
+          echo "🔁 Refreshing Azure OIDC login before token expiry..."
+          local id_token
+          id_token=$(curl -sLS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" | jq -r '.value')
+          if [[ -z "$id_token" || "$id_token" == "null" ]]; then
+            echo "⚠️  Warning: failed to fetch a fresh OIDC token; continuing with existing login"
+            return
+          fi
+          az login --service-principal \
+            -u "$REAUTH_CLIENT_ID" \
+            -t "$REAUTH_TENANT_ID" \
+            --federated-token "$id_token" \
+            --allow-no-subscriptions >/dev/null
+          az account set --subscription "$REAUTH_SUBSCRIPTION_ID"
+          echo "✅ Re-authenticated"
+        }
+
+        # Kick off the deployment asynchronously so this action controls the wait
+        # loop (and can refresh auth mid-flight) instead of one blocking az call.
         if ! az deployment sub create \
           --name "$NAME" \
           --location "$LOCATION" \
@@ -159,16 +213,14 @@ runs:
           --parameters "$PARAMS_FILE" \
             applyCerts="$APPLY_CERTS" \
             semver="$SEMVER" \
-            ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; then
+            ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+          --no-wait; then
           echo ""
-          echo "❌ ERROR: Bicep deployment failed"
+          echo "❌ ERROR: Failed to start Bicep deployment"
           echo "   Deployment name: $NAME"
           echo "   Location: $LOCATION"
           echo "   Template: $TEMPLATE"
           echo "   Parameters: $PARAMS_FILE"
-          echo ""
-          echo "   Check the Azure Portal for detailed error messages:"
-          echo "   https://portal.azure.com/#view/HubsExtension/DeploymentDetailsBlade/~/overview/id/%2Fsubscriptions%2F$SUBSCRIPTION_ID%2Fproviders%2FMicrosoft.Resources%2Fdeployments%2F$NAME"
           exit 1
         fi
 
@@ -179,37 +231,76 @@ runs:
         echo "deployment-name=$NAME" >> "$GITHUB_OUTPUT"
         echo "deployment-id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
 
-        # Verify deployment if requested
-        if [[ "$VERIFY_DEPLOYMENT" == "true" ]]; then
-          echo ""
-          echo "🔍 Verifying deployment status..."
-          
+        echo ""
+        echo "⏳ Waiting for deployment to complete..."
+        PORTAL_URL="https://portal.azure.com/#view/HubsExtension/DeploymentDetailsBlade/~/overview/id/%2Fsubscriptions%2F$SUBSCRIPTION_ID%2Fproviders%2FMicrosoft.Resources%2Fdeployments%2F$NAME"
+
+        POLL_INTERVAL=60
+        MAX_WAIT_SECONDS=$((4 * 60 * 60)) # 4h ceiling; cert issuance has taken ~2h before
+        REAUTH_INTERVAL_SECONDS=$((40 * 60)) # comfortably under the ~60-75min AAD token lifetime
+        ELAPSED=0
+        LAST_AUTH=0
+        PROVISIONING_STATE="Running"
+
+        while true; do
+          if [[ "$REAUTH_ENABLED" == "true" && $((ELAPSED - LAST_AUTH)) -ge $REAUTH_INTERVAL_SECONDS ]]; then
+            reauth
+            LAST_AUTH=$ELAPSED
+          fi
+
           PROVISIONING_STATE=$(az deployment sub show \
             --name "$NAME" \
             --query properties.provisioningState \
             -o tsv 2>/dev/null || echo "Unknown")
-          
-          echo "provisioning-state=$PROVISIONING_STATE" >> "$GITHUB_OUTPUT"
-          
-          if [[ "$PROVISIONING_STATE" == "Succeeded" ]]; then
-            echo "✅ Deployment verified: $PROVISIONING_STATE"
-            
-            # Show deployment outputs if any
-            OUTPUTS=$(az deployment sub show \
-              --name "$NAME" \
-              --query properties.outputs \
-              -o json 2>/dev/null || echo "{}")
-            
-            if [[ "$OUTPUTS" != "{}" ]]; then
-              echo ""
-              echo "📤 Deployment outputs:"
-              echo "$OUTPUTS" | jq '.'
-            fi
-          else
-            echo "⚠️  Warning: Deployment state is $PROVISIONING_STATE"
+
+          case "$PROVISIONING_STATE" in
+            Succeeded|Failed|Canceled)
+              break
+              ;;
+          esac
+
+          if (( ELAPSED >= MAX_WAIT_SECONDS )); then
+            echo "❌ ERROR: Timed out after ${MAX_WAIT_SECONDS}s waiting for deployment (last state: $PROVISIONING_STATE)"
+            echo "   Check the Azure Portal for detailed error messages:"
+            echo "   $PORTAL_URL"
+            echo "provisioning-state=$PROVISIONING_STATE" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
-        else
-          echo "provisioning-state=NotVerified" >> "$GITHUB_OUTPUT"
+
+          sleep "$POLL_INTERVAL"
+          ELAPSED=$((ELAPSED + POLL_INTERVAL))
+        done
+
+        echo "provisioning-state=$PROVISIONING_STATE" >> "$GITHUB_OUTPUT"
+
+        if [[ "$PROVISIONING_STATE" != "Succeeded" ]]; then
+          echo ""
+          echo "❌ ERROR: Bicep deployment finished with state $PROVISIONING_STATE"
+          echo "   Deployment name: $NAME"
+          echo "   Location: $LOCATION"
+          echo "   Template: $TEMPLATE"
+          echo "   Parameters: $PARAMS_FILE"
+          echo ""
+          echo "   Check the Azure Portal for detailed error messages:"
+          echo "   $PORTAL_URL"
+          exit 1
+        fi
+
+        # Verify deployment if requested (state already confirmed above; this
+        # additionally surfaces deployment outputs for visibility).
+        if [[ "$VERIFY_DEPLOYMENT" == "true" ]]; then
+          echo "✅ Deployment verified: $PROVISIONING_STATE"
+
+          OUTPUTS=$(az deployment sub show \
+            --name "$NAME" \
+            --query properties.outputs \
+            -o json 2>/dev/null || echo "{}")
+
+          if [[ "$OUTPUTS" != "{}" ]]; then
+            echo ""
+            echo "📤 Deployment outputs:"
+            echo "$OUTPUTS" | jq '.'
+          fi
         fi
 
         echo "✅ Deployment completed successfully"
