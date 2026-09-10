@@ -1,6 +1,7 @@
 name: Create GitHub release
 description: >-
   Runs gh release create with --generate-notes, tagging the commit the workflow is running on.
+  A tag carrying a semver prerelease suffix is published as a prerelease.
   Requires GH_TOKEN with contents write for releases.
 
 inputs:
@@ -66,6 +67,15 @@ runs:
         if [[ "$#" -eq 0 ]]; then
           echo "::error::No files matched pattern '${FILES}'. Paths are relative to the workspace; use e.g. dist/* after download-artifact."
           exit 1
+        fi
+
+        # GitVersion labels a develop build `-alpha.N`, so the tag itself says whether this is a
+        # prerelease. Keying on the tag rather than the branch keeps a stable tag stable no matter
+        # which ref it was cut from. Build metadata (+sha) is not a prerelease marker, so strip it
+        # before looking for the `-`.
+        if [[ "${TAG%%+*}" == *-* ]]; then
+          set -- --prerelease "$@"
+          echo "::notice::Tag '${TAG}' carries a semver prerelease suffix; publishing as a prerelease."
         fi
 
         set +e
