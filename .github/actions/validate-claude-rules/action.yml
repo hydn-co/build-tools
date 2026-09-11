@@ -1,0 +1,15 @@
+name: Validate Claude rules
+description: Fail when a .claude/rules file scopes itself to globs that match no files.
+
+inputs:
+  path:
+    description: Repository root to validate.
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Validate rule paths
+      shell: bash
+      run: python3 "${{ github.action_path }}/validate_rule_paths.py" "${{ inputs.path }}"

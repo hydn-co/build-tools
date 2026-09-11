@@ -1,0 +1,44 @@
+name: Validate Claude Rules
+
+# Reusable workflow for repositories carrying .claude/rules/. A rule that scopes
+# itself with `paths:` frontmatter enters context only when Claude opens a matching
+# file. A glob matching nothing therefore produces a rule that is valid markdown,
+# commits cleanly, reviews cleanly, and never loads once -- with no error at runtime
+# to surface it. This turns that into a build failure.
+#
+# Usage (in the caller's ci.yml):
+#
+#   jobs:
+#     claude-rules:
+#       uses: hydn-co/build-tools/.github/workflows/validate-claude-rules.yml@main
+#
+# No secrets are required: the validator is stdlib Python and ships in this
+# public repository, so the caller needs no token to reach it.
+#
+# Rules with no `paths:` frontmatter are repo-wide and are reported but not gated.
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        description: Repository root to validate.
+        required: false
+        default: '.'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  claude-rules:
+    name: Claude rule paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate Claude rules
+        uses: hydn-co/build-tools/.github/actions/validate-claude-rules@main
+        with:
+          path: ${{ inputs.path }}
