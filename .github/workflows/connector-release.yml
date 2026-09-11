@@ -179,6 +179,19 @@ jobs:
           working-directory: dist
           asset-prefix: ${{ format('{0}-{1}-', github.event.repository.name, needs.validate.outputs.version) }}
 
+      # Detached Ed25519 signatures over each released binary (HYD-1645). The private key
+      # lives only in CI; the agent verifies against a public key pinned into its build and
+      # refuses any connector download without a valid signature. Published as <asset>.sig
+      # via create-github-release's `files: dist/*` below and fetched by mesh-core's portal.
+      - uses: hydn-co/build-tools/.github/actions/sign-release-assets@main
+        env:
+          MESH_ARTIFACT_SIGNING_KEY_PEM: ${{ secrets.MESH_ARTIFACT_SIGNING_KEY_PEM }}
+        with:
+          working-directory: dist
+          asset-prefix: ${{ format('{0}-{1}-', github.event.repository.name, needs.validate.outputs.version) }}
+          client-id: ${{ secrets.MESH_MODULES_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MESH_MODULES_APP_KEY }}
+
       - uses: hydn-co/build-tools/.github/actions/assert-github-release-absent@main
         with:
           tag: ${{ needs.validate.outputs.tag }}
